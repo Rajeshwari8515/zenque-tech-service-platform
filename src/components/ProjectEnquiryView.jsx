@@ -22,13 +22,17 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { SERVICES_DATA } from '../data/mockServices';
+import { generateNextEnquiryId, saveNewEnquiry } from '../utils/enquiryStorage';
 
 export default function ProjectEnquiryView({ 
   selectedService, 
   selectedPackage, 
   setSelectedService, 
   setSelectedPackage, 
-  setActiveView 
+  setActiveView,
+  enquiries,
+  setEnquiries,
+  setSelectedEnquiryId
 }) {
   // Step State (1: Requirements, 2: Budget, 3: Timeline, 4: Contact, 5: Files, 6: Consultation, 7: Review, 8: Success)
   const [step, setStep] = useState(1);
@@ -60,8 +64,8 @@ export default function ProjectEnquiryView({
     preferredTime: '10:00 AM - 12:00 PM'
   });
 
-  // Generated Enquiry ID (Fixed prototype structure ZT-10234, persistent once set)
-  const [enquiryId] = useState('ZT-10234');
+  // Generated Enquiry ID (Persistent once generated)
+  const [enquiryId, setEnquiryId] = useState(() => generateNextEnquiryId());
 
   // Input Handlers
   const handleInputChange = (field, value) => {
@@ -111,6 +115,43 @@ export default function ProjectEnquiryView({
     setIsSubmitting(true);
     setTimeout(() => {
       setIsSubmitting(false);
+
+      const generatedId = enquiryId || generateNextEnquiryId();
+
+      const newEnquiryObj = {
+        enquiryId: generatedId,
+        id: generatedId,
+        service: activeService.title,
+        serviceTitle: activeService.title,
+        package: activePackage ? activePackage.name : 'Custom Package',
+        packageTier: activePackage ? activePackage.name : 'Custom Package',
+        projectName: formData.projectName || 'Zenque Technology Project',
+        projectDescription: formData.projectDescription || `Full-scale ${activeService.title} implementation tailored to business growth.`,
+        requiredFeatures: formData.requiredFeatures || '',
+        additionalRequirements: formData.additionalRequirements || '',
+        budget: formData.budget || '₹50K – ₹1L',
+        timeline: formData.timeline || '2–4 Weeks',
+        clientName: formData.fullName || 'Alex Morgan',
+        fullName: formData.fullName || 'Alex Morgan',
+        companyName: formData.companyName || 'Nexus Tech',
+        email: formData.email || 'alex@example.com',
+        phone: formData.phone || '+91 98765 43210',
+        uploadedFiles: formData.files || [],
+        files: formData.files || [],
+        consultation: formData.needsConsultation || 'yes',
+        requestCall: formData.needsConsultation || 'yes',
+        needsConsultation: formData.needsConsultation || 'yes',
+        preferredDate: formData.preferredDate || '',
+        preferredTime: formData.preferredTime || '',
+        status: 'Enquiry Submitted',
+        submittedDate: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+        createdAt: new Date().toISOString()
+      };
+
+      const updated = saveNewEnquiry(newEnquiryObj);
+      if (setEnquiries) setEnquiries(updated);
+      if (setSelectedEnquiryId) setSelectedEnquiryId(generatedId);
+
       setStep(8); // Move to Success Page
       window.scrollTo(0, 0);
     }, 1200);
@@ -1066,7 +1107,7 @@ export default function ProjectEnquiryView({
                   Ready to submit your enquiry?
                 </div>
                 <div style={{ fontSize: '0.8125rem', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>
-                  Upon submission, you will receive a unique Enquiry ID (<strong style={{ color: 'var(--burgundy-main)' }}>ZT-10234</strong>) for tracking.
+                  Upon submission, you will receive a unique Enquiry ID (<strong style={{ color: 'var(--burgundy-main)' }}>{enquiryId}</strong>) for tracking.
                 </div>
               </div>
 
@@ -1189,25 +1230,18 @@ export default function ProjectEnquiryView({
 
             {/* Action Buttons */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem', maxWidth: '420px', margin: '0 auto' }}>
-              <div style={{ display: 'flex', gap: '0.85rem', flexWrap: 'wrap' }}>
-                <button 
-                  className="btn btn-primary" 
-                  style={{ flex: 1, justifyContent: 'center' }}
-                  onClick={() => setActiveView('client-portal')}
-                >
-                  <span>Track Enquiry</span>
-                  <ArrowRight size={16} />
-                </button>
-
-                <button 
-                  className="btn btn-secondary" 
-                  style={{ flex: 1, justifyContent: 'center' }}
-                  onClick={() => setActiveView('client-portal')}
-                >
-                  <User size={16} />
-                  <span>Client Login</span>
-                </button>
-              </div>
+              <button 
+                className="btn btn-primary" 
+                style={{ width: '100%', justifyContent: 'center', padding: '0.85rem' }}
+                onClick={() => {
+                  if (setSelectedEnquiryId) setSelectedEnquiryId(enquiryId);
+                  setActiveView('client-portal');
+                }}
+              >
+                <User size={16} />
+                <span>Go to Client Login</span>
+                <ArrowRight size={16} />
+              </button>
 
               <button 
                 className="btn btn-outline" 

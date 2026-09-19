@@ -82,10 +82,10 @@ export default function Footer({ setActiveView, onRequestClick }) {
 
         {/* Sub-footer */}
         <div style={{ paddingTop: '2rem', borderTop: '1px solid var(--border-dark)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', fontSize: '0.8125rem', color: 'var(--text-on-dark-muted)' }}>
-          <div>© {new Date().getFullYear()} Zenque Tech Service Booking & Quotation Platform.</div>
+          <div>© {new Date().getFullYear()} Zenque Tech Enterprise Services. All rights reserved.</div>
           <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'center' }}>
             <span onClick={() => setActiveView('client-portal')} style={{ color: '#E8B6BC', cursor: 'pointer', fontWeight: 600 }}>Client Portal</span>
-            <span onClick={() => setActiveView('admin-portal')} style={{ color: '#94A3B8', cursor: 'pointer', fontWeight: 600 }}>Admin Portal</span>
+            <span onClick={() => setActiveView('admin-portal')} style={{ color: '#64748B', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 500 }}>Staff Admin Access</span>
             <span>Terms of Engagement</span>
           </div>
         </div>

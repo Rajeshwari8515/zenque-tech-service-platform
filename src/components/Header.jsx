@@ -56,7 +56,7 @@ export default function Header({ activeView, setActiveView, onRequestClick, onHo
             <span>Client Login</span>
           </div>
 
-          <button className="btn btn-primary btn-sm" onClick={onRequestClick}>
+          <button className="btn btn-primary btn-sm" onClick={() => setActiveView('services')}>
             <span>Request a Service</span>
             <ArrowRight size={14} />
           </button>

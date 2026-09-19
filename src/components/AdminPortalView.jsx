@@ -32,24 +32,38 @@ import {
   ToggleRight
 } from 'lucide-react';
 import { SERVICES_DATA } from '../data/mockServices';
+import { getStoredEnquiries, saveStoredEnquiries } from '../utils/enquiryStorage';
 
 export default function AdminPortalView({ 
   setActiveView,
-  enquiries,
-  setEnquiries
+  enquiries: propsEnquiries,
+  setEnquiries: propsSetEnquiries,
+  selectedEnquiryId: propsSelectedEnquiryId,
+  setSelectedEnquiryId: propsSetSelectedEnquiryId
 }) {
-  // Admin Login Authentication State
-  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(true);
+  // Admin Login Authentication State (Default logged out for role separation)
+  const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
   const [adminEmail, setAdminEmail] = useState('admin@zenquetech.com');
   const [adminPassword, setAdminPassword] = useState('admin123');
+  const [adminLoginError, setAdminLoginError] = useState('');
 
   // Active Admin Sub-Tab
   // ('dashboard' | 'enquiries' | 'enquiry-detail' | 'create-quotation' | 'quotations' | 'consultations' | 'services' | 'packages' | 'clients')
   const [adminTab, setAdminTab] = useState('dashboard');
   
+  // Local state fallback for enquiries
+  const [localEnquiries, setLocalEnquiries] = useState(() => getStoredEnquiries());
+  const enquiries = propsEnquiries && propsEnquiries.length > 0 ? propsEnquiries : localEnquiries;
+  const setEnquiries = propsSetEnquiries || setLocalEnquiries;
+
   // Active Selected Enquiry ID for detail/quotation
-  const [selectedEnquiryId, setSelectedEnquiryId] = useState('ZT-10234');
-  
+  const [internalSelectedEnquiryId, setInternalSelectedEnquiryId] = useState(() => propsSelectedEnquiryId || 'ZT-10234');
+  const selectedEnquiryId = propsSelectedEnquiryId || internalSelectedEnquiryId;
+  const setSelectedEnquiryId = (id) => {
+    setInternalSelectedEnquiryId(id);
+    if (propsSetSelectedEnquiryId) propsSetSelectedEnquiryId(id);
+  };
+
   // Status Filter for Enquiries List
   const [statusFilter, setStatusFilter] = useState('All');
 
@@ -84,52 +98,62 @@ export default function AdminPortalView({
   ]);
 
   // Current active enquiry object from shared state
-  const currentEnquiry = enquiries.find(e => e.id === selectedEnquiryId) || enquiries[0];
+  const currentEnquiry = enquiries.find(e => (e.enquiryId || e.id) === selectedEnquiryId) || enquiries[0] || {};
 
   // Handler for saving/sending quotation
   const handleSendQuotationSubmit = () => {
     const calculatedTotal = parseInt(quotationFormData.baseCost || '0', 10) + parseInt(quotationFormData.additionalCost || '0', 10);
     const formattedTotal = '₹' + calculatedTotal.toLocaleString('en-IN');
+    const targetId = currentEnquiry.enquiryId || currentEnquiry.id || selectedEnquiryId;
+    const numPart = targetId.includes('-') ? targetId.split('-')[1] : '10234';
 
-    setEnquiries(prev => prev.map(item => {
-      if (item.id === selectedEnquiryId) {
+    const updated = enquiries.map(item => {
+      if ((item.enquiryId || item.id) === targetId) {
         return {
           ...item,
           status: 'quotation_sent',
           quotation: {
-            id: `QT-${item.id.split('-')[1]}`,
-            issuedDate: '12 Sep 2026',
+            id: `QT-${numPart}`,
+            issuedDate: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
             validUntil: quotationFormData.validUntilDate || '30 Sep 2026',
             totalAmount: formattedTotal,
             architectNotes: quotationFormData.architectNotes,
             breakdown: [
-              { desc: `${item.serviceTitle} (${item.packageTier}) Core Scope`, cost: '₹' + parseInt(quotationFormData.baseCost || '0', 10).toLocaleString('en-IN') },
+              { desc: `${item.serviceTitle || item.service} (${item.packageTier || item.package}) Core Scope`, cost: '₹' + parseInt(quotationFormData.baseCost || '0', 10).toLocaleString('en-IN') },
               { desc: 'API Integration & Cloud Infrastructure Setup', cost: '₹' + parseInt(quotationFormData.additionalCost || '0', 10).toLocaleString('en-IN') }
             ]
           }
         };
       }
       return item;
-    }));
+    });
 
+    saveStoredEnquiries(updated);
+    if (setEnquiries) setEnquiries(updated);
     setIsSendQuotationModalOpen(false);
     setAdminTab('enquiry-detail');
   };
 
   // Handler for updating enquiry status manually
   const handleUpdateStatusSubmit = () => {
-    setEnquiries(prev => prev.map(item => {
-      if (item.id === selectedEnquiryId) {
+    const targetId = currentEnquiry.enquiryId || currentEnquiry.id || selectedEnquiryId;
+    const updated = enquiries.map(item => {
+      if ((item.enquiryId || item.id) === targetId) {
         return { ...item, status: newStatus };
       }
       return item;
-    }));
+    });
+
+    saveStoredEnquiries(updated);
+    if (setEnquiries) setEnquiries(updated);
     setIsStatusUpdateModalOpen(false);
   };
 
   // Helper for Status Badge
   const renderStatusBadge = (status) => {
     switch (status) {
+      case 'Enquiry Submitted':
+        return <span className="status-pill" style={{ backgroundColor: '#E0F2FE', color: '#0369A1', border: '1px solid #7DD3FC' }}>Enquiry Submitted</span>;
       case 'new':
         return <span className="status-pill" style={{ backgroundColor: '#E0F2FE', color: '#0369A1', border: '1px solid #7DD3FC' }}>New</span>;
       case 'under_review':
@@ -180,9 +204,21 @@ export default function AdminPortalView({
   // =========================================================================
   if (!isAdminLoggedIn) {
     return (
-      <div className="section" style={{ paddingTop: '4rem', paddingBottom: '6rem', backgroundColor: '#0F172A', minHeight: '90vh', display: 'flex', alignItems: 'center' }}>
+      <div className="section" style={{ paddingTop: '3rem', paddingBottom: '6rem', backgroundColor: '#0F172A', minHeight: '90vh', display: 'flex', alignItems: 'center' }}>
         <div className="container" style={{ maxWidth: '440px' }}>
           
+          {/* Back to Public Website Navigation */}
+          <div style={{ marginBottom: '1.25rem' }}>
+            <button 
+              onClick={() => setActiveView('home')}
+              className="btn btn-secondary btn-sm"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', color: '#94A3B8', backgroundColor: '#1E293B', borderColor: '#334155' }}
+            >
+              <ArrowLeft size={15} />
+              <span>Back to Public Website</span>
+            </button>
+          </div>
+
           <div className="card" style={{ padding: '2.5rem', backgroundColor: '#1E293B', borderColor: '#334155', boxShadow: 'var(--shadow-lg)' }}>
             
             <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
@@ -198,7 +234,25 @@ export default function AdminPortalView({
               </p>
             </div>
 
-            <form onSubmit={(e) => { e.preventDefault(); setIsAdminLoggedIn(true); }}>
+            {/* Error Alert */}
+            {adminLoginError && (
+              <div style={{ color: '#FCA5A5', backgroundColor: 'rgba(239, 68, 68, 0.15)', border: '1px solid #EF4444', padding: '0.65rem 0.85rem', borderRadius: 'var(--radius-sm)', fontSize: '0.8125rem', marginBottom: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <AlertCircle size={15} style={{ flexShrink: 0, color: '#F87171' }} />
+                <span>{adminLoginError}</span>
+              </div>
+            )}
+
+            <form onSubmit={(e) => { 
+              e.preventDefault(); 
+              setAdminLoginError('');
+              const trimmed = adminEmail.trim().toLowerCase();
+              if (trimmed === 'admin@zenquetech.com' && adminPassword === 'admin123') {
+                setIsAdminLoggedIn(true);
+                setAdminLoginError('');
+              } else {
+                setAdminLoginError('Invalid credentials. Please use demo login: admin@zenquetech.com / admin123');
+              }
+            }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', marginBottom: '1.75rem' }}>
                 
                 <div>
@@ -240,7 +294,7 @@ export default function AdminPortalView({
             </form>
 
             <div style={{ marginTop: '1.75rem', textAlign: 'center', paddingTop: '1.25rem', borderTop: '1px solid #334155', fontSize: '0.8125rem', color: '#94A3B8' }}>
-              <span>Demo Staff Login: <strong>admin@zenquetech.com</strong></span>
+              <span>Demo Staff Login: <strong>admin@zenquetech.com</strong> / <strong>admin123</strong></span>
             </div>
 
           </div>
@@ -361,11 +415,11 @@ export default function AdminPortalView({
         <div style={{ padding: '1rem', borderTop: '1px solid #334155', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
           <button 
             className="btn btn-secondary btn-sm"
-            onClick={() => setActiveView('client-portal')}
+            onClick={() => setActiveView('home')}
             style={{ width: '100%', justifyContent: 'center', backgroundColor: '#1E293B', color: '#F8FAFC', borderColor: '#334155' }}
           >
             <ExternalLink size={14} />
-            <span>Switch to Client Portal</span>
+            <span>Exit to Public Website</span>
           </button>
 
           <button 
@@ -496,15 +550,15 @@ export default function AdminPortalView({
                   </thead>
                   <tbody>
                     {enquiries.map((enq) => (
-                      <tr key={enq.id}>
+                      <tr key={enq.enquiryId || enq.id}>
                         <td>
-                          <strong style={{ fontFamily: 'monospace', color: 'var(--burgundy-main)', fontSize: '0.95rem' }}>{enq.id}</strong>
+                          <strong style={{ fontFamily: 'monospace', color: 'var(--burgundy-main)', fontSize: '0.95rem' }}>{enq.enquiryId || enq.id}</strong>
                         </td>
                         <td>
-                          <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{enq.fullName}</div>
+                          <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{enq.fullName || enq.clientName}</div>
                           <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{enq.companyName}</div>
                         </td>
-                        <td style={{ fontWeight: 600 }}>{enq.serviceTitle} ({enq.packageTier})</td>
+                        <td style={{ fontWeight: 600 }}>{enq.serviceTitle || enq.service} ({enq.packageTier || enq.package})</td>
                         <td>{renderClientResponseBadge(enq.status)}</td>
                         <td>{renderStatusBadge(enq.status)}</td>
                         <td style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>{enq.submittedDate}</td>
@@ -512,7 +566,7 @@ export default function AdminPortalView({
                           <button 
                             className="btn btn-primary btn-sm"
                             onClick={() => {
-                              setSelectedEnquiryId(enq.id);
+                              setSelectedEnquiryId(enq.enquiryId || enq.id);
                               setAdminTab('enquiry-detail');
                             }}
                             style={{ fontSize: '0.8125rem', padding: '0.35rem 0.75rem' }}
@@ -548,7 +602,7 @@ export default function AdminPortalView({
                 </div>
 
                 <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                  {['All', 'Under Review', 'Quotation Sent', 'Accepted', 'Rejected', 'Project Started'].map((st) => (
+                  {['All', 'Enquiry Submitted', 'Under Review', 'Quotation Sent', 'Accepted', 'Rejected', 'Project Started'].map((st) => (
                     <button 
                       key={st}
                       className={`btn btn-sm ${statusFilter === st ? 'btn-primary' : 'btn-secondary'}`}
@@ -582,6 +636,7 @@ export default function AdminPortalView({
                     {enquiries
                       .filter(e => {
                         if (statusFilter === 'All') return true;
+                        if (statusFilter === 'Enquiry Submitted') return e.status === 'Enquiry Submitted';
                         if (statusFilter === 'Under Review') return e.status === 'under_review';
                         if (statusFilter === 'Quotation Sent') return e.status === 'quotation_sent';
                         if (statusFilter === 'Accepted') return e.status === 'accepted';
@@ -590,17 +645,17 @@ export default function AdminPortalView({
                         return true;
                       })
                       .map((enq) => (
-                        <tr key={enq.id}>
+                        <tr key={enq.enquiryId || enq.id}>
                           <td>
-                            <strong style={{ fontFamily: 'monospace', color: 'var(--burgundy-main)', fontSize: '0.95rem' }}>{enq.id}</strong>
+                            <strong style={{ fontFamily: 'monospace', color: 'var(--burgundy-main)', fontSize: '0.95rem' }}>{enq.enquiryId || enq.id}</strong>
                           </td>
                           <td>
-                            <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{enq.fullName}</div>
+                            <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{enq.fullName || enq.clientName}</div>
                             <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{enq.companyName} • {enq.email}</div>
                           </td>
                           <td>
-                            <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{enq.serviceTitle}</div>
-                            <div style={{ fontSize: '0.75rem', color: 'var(--burgundy-main)' }}>{enq.packageTier}</div>
+                            <div style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{enq.serviceTitle || enq.service}</div>
+                            <div style={{ fontSize: '0.75rem', color: 'var(--burgundy-main)' }}>{enq.packageTier || enq.package}</div>
                           </td>
                           <td style={{ color: 'var(--text-secondary)' }}>{enq.budget}</td>
                           <td style={{ color: 'var(--text-secondary)' }}>{enq.timeline}</td>
@@ -610,7 +665,7 @@ export default function AdminPortalView({
                             <button 
                               className="btn btn-secondary btn-sm"
                               onClick={() => {
-                                setSelectedEnquiryId(enq.id);
+                                setSelectedEnquiryId(enq.enquiryId || enq.id);
                                 setAdminTab('enquiry-detail');
                               }}
                               style={{ fontSize: '0.8125rem', padding: '0.35rem 0.75rem' }}
@@ -1187,7 +1242,7 @@ export default function AdminPortalView({
             </div>
 
             <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1.25rem', lineHeight: '1.5' }}>
-              Sending quotation <strong>QT-{currentEnquiry.id.split('-')[1]}</strong> for Enquiry <strong>{currentEnquiry.id}</strong> to client <strong>{currentEnquiry.email}</strong>.
+              Sending quotation <strong>QT-{((currentEnquiry.enquiryId || currentEnquiry.id || '').split('-')[1]) || '10234'}</strong> for Enquiry <strong>{currentEnquiry.enquiryId || currentEnquiry.id}</strong> to client <strong>{currentEnquiry.email}</strong>.
             </p>
 
             <div style={{ backgroundColor: 'var(--status-blue-bg)', border: '1px solid #BAE6FD', padding: '0.85rem', borderRadius: 'var(--radius-md)', marginBottom: '1.5rem', fontSize: '0.8125rem', color: '#0369A1' }}>
@@ -1220,7 +1275,7 @@ export default function AdminPortalView({
             <div className="modal-header">
               <div>
                 <h3 style={{ fontSize: '1.25rem', color: 'var(--text-primary)' }}>
-                  Update Status for {currentEnquiry.id}
+                  Update Status for {currentEnquiry.enquiryId || currentEnquiry.id}
                 </h3>
               </div>
               <button className="close-btn" onClick={() => setIsStatusUpdateModalOpen(false)}>
@@ -1235,6 +1290,7 @@ export default function AdminPortalView({
                 value={newStatus}
                 onChange={(e) => setNewStatus(e.target.value)}
               >
+                <option value="Enquiry Submitted">Enquiry Submitted</option>
                 <option value="new">New</option>
                 <option value="under_review">Under Review</option>
                 <option value="quotation_sent">Quotation Sent</option>

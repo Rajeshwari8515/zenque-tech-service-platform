@@ -38,7 +38,7 @@ export default function HomeView({ setActiveView, setSelectedService, onRequestC
               </p>
               
               <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-                <button className="btn btn-primary btn-lg" onClick={onRequestClick}>
+                <button className="btn btn-primary btn-lg" onClick={() => setActiveView('services')}>
                   <span>Request a Service</span>
                   <ArrowRight size={18} />
                 </button>
@@ -160,7 +160,7 @@ export default function HomeView({ setActiveView, setSelectedService, onRequestC
           <p style={{ color: '#FCE7F3', maxWidth: '540px', margin: '0 auto 1.5rem', fontSize: '1rem' }}>
             Select a service or request a custom quotation tailored to your requirements.
           </p>
-          <button className="btn btn-dark btn-lg" onClick={onRequestClick}>
+          <button className="btn btn-dark btn-lg" onClick={() => setActiveView('services')}>
             <span>Request a Service</span>
             <ArrowRight size={16} />
           </button>

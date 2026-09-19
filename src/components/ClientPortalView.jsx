@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   User, 
   Lock, 
@@ -24,109 +24,151 @@ import {
   ExternalLink
 } from 'lucide-react';
 import { SERVICES_DATA } from '../data/mockServices';
+import { getStoredEnquiries, saveStoredEnquiries } from '../utils/enquiryStorage';
 
 export default function ClientPortalView({ 
   setActiveView,
   initialEnquiryId = 'ZT-10234',
   initialTab = 'dashboard',
   enquiries: propsEnquiries,
-  setEnquiries: propsSetEnquiries
+  setEnquiries: propsSetEnquiries,
+  selectedEnquiryId: propsSelectedEnquiryId,
+  setSelectedEnquiryId: propsSetSelectedEnquiryId
 }) {
-  // Authentication state (Default logged in for seamless demo after submission or login click)
-  const [isLoggedIn, setIsLoggedIn] = useState(true);
-  const [loginEmail, setLoginEmail] = useState('alex@nexustech.com');
-  const [loginPassword, setLoginPassword] = useState('password123');
+  // Authentication state (Default logged out for role separation)
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [authMode, setAuthMode] = useState('login'); // 'login' | 'register'
+  const [loginEmail, setLoginEmail] = useState('client@zenquetech.com');
+  const [loginPassword, setLoginPassword] = useState('client123');
+  const [loginError, setLoginError] = useState('');
+  const [regSuccessMsg, setRegSuccessMsg] = useState('');
+
+  // Client Registration Form State
+  const [registerFormData, setRegisterFormData] = useState({
+    fullName: '',
+    companyName: '',
+    email: '',
+    phone: '',
+    password: '',
+    confirmPassword: ''
+  });
 
   // Client Area Active Sub-Tab ('dashboard' | 'enquiries' | 'details' | 'quotation' | 'profile')
   const [activeTab, setActiveTab] = useState(initialTab);
   
+  // Local fallback state if props not passed
+  const [localEnquiries, setLocalEnquiries] = useState(() => getStoredEnquiries());
+
+  const enquiries = propsEnquiries && propsEnquiries.length > 0 ? propsEnquiries : localEnquiries;
+  const setEnquiries = propsSetEnquiries || setLocalEnquiries;
+
   // Selected Enquiry ID to view in details/quotation
-  const [selectedEnquiryId, setSelectedEnquiryId] = useState(initialEnquiryId);
+  const [internalSelectedEnquiryId, setInternalSelectedEnquiryId] = useState(() => {
+    return propsSelectedEnquiryId || initialEnquiryId;
+  });
+
+  const selectedEnquiryId = propsSelectedEnquiryId || internalSelectedEnquiryId;
+  const setSelectedEnquiryId = (id) => {
+    setInternalSelectedEnquiryId(id);
+    if (propsSetSelectedEnquiryId) propsSetSelectedEnquiryId(id);
+  };
+
+  // Keep state synced with localStorage
+  useEffect(() => {
+    if (!propsEnquiries) {
+      setLocalEnquiries(getStoredEnquiries());
+    }
+  }, [propsEnquiries]);
+
+  // Handler for Client Login Submit
+  const handleClientLogin = (e) => {
+    e.preventDefault();
+    setLoginError('');
+    const trimmedEmail = loginEmail.trim().toLowerCase();
+    const isDemoEmail = trimmedEmail === 'client@zenquetech.com' || trimmedEmail === 'alex@nexustech.com' || enquiries.some(item => (item.email || '').toLowerCase() === trimmedEmail);
+    
+    if (isDemoEmail && (loginPassword === 'client123' || loginPassword === 'password123' || loginPassword.length > 0)) {
+      setIsLoggedIn(true);
+      setLoginError('');
+    } else {
+      setLoginError('Invalid email or password. Use demo login: client@zenquetech.com / client123');
+    }
+  };
+
+  // Handler for Client Registration Submit
+  const handleClientRegister = (e) => {
+    e.preventDefault();
+    setLoginError('');
+    if (registerFormData.password !== registerFormData.confirmPassword) {
+      setLoginError('Passwords do not match.');
+      return;
+    }
+    setLoginEmail(registerFormData.email || 'client@zenquetech.com');
+    setLoginPassword(registerFormData.password || 'client123');
+    setRegSuccessMsg('Account created successfully! Please sign in with your credentials.');
+    setAuthMode('login');
+  };
 
   // Modals for Accept/Reject Quotation
   const [isAcceptModalOpen, setIsAcceptModalOpen] = useState(false);
   const [isRejectModalOpen, setIsRejectModalOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState('');
 
-  // Fallback local state if props not passed
-  const [localEnquiries, setLocalEnquiries] = useState([
-    {
-      id: 'ZT-10234',
-      serviceTitle: 'Web Development',
-      packageTier: 'Standard Package',
-      submittedDate: '12 Sep 2026',
-      status: 'under_review',
-      projectName: 'Corporate Portal & Admin Dashboard',
-      projectDescription: 'High-performance web application with custom authentication, responsive frontend, and PostgreSQL database backend.',
-      requiredFeatures: 'User Login, Admin Analytics Panel, Third-Party API Sync',
-      additionalRequirements: 'ISO security compliance, zero-downtime deployment',
-      budget: '₹50K – ₹1L',
-      timeline: '2–4 Weeks',
-      fullName: 'Alex Morgan',
-      companyName: 'Nexus Tech Innovations',
-      email: 'alex@nexustech.com',
-      phone: '+91 98765 43210',
-      files: [
-        { name: 'project_brief_draft.pdf', size: '1.2 MB' }
-      ],
-      needsConsultation: 'yes',
-      preferredDate: '15 Sep 2026',
-      preferredTime: '10:00 AM - 12:00 PM',
-      quotation: {
-        id: 'QT-10234',
-        issuedDate: '12 Sep 2026',
-        validUntil: '30 Sep 2026',
-        totalAmount: '₹77,000',
-        architectNotes: 'Includes full source code ownership, Docker containerization scripts, and 4 weeks of SLA technical support.',
-        breakdown: [
-          { desc: 'Standard Web Application Scope & Frontend Architecture', cost: '₹65,000' },
-          { desc: 'Database Schema Setup & REST API Integration', cost: '₹12,000' }
-        ]
-      }
-    }
-  ]);
-
-  const enquiries = propsEnquiries || localEnquiries;
-  const setEnquiries = propsSetEnquiries || setLocalEnquiries;
-
   // Current active enquiry object
-  const currentEnquiry = enquiries.find(e => e.id === selectedEnquiryId) || enquiries[0];
+  const currentEnquiry = enquiries.find(e => (e.enquiryId || e.id) === selectedEnquiryId) || enquiries[0] || {};
 
   // Handler for simulating admin sending quotation for ZT-10234
   const handleSimulateSendQuotation = (enquiryIdToUpdate) => {
-    setEnquiries(prev => prev.map(item => {
-      if (item.id === enquiryIdToUpdate) {
+    const updated = enquiries.map(item => {
+      if ((item.enquiryId || item.id) === enquiryIdToUpdate) {
         return { ...item, status: 'quotation_sent' };
       }
       return item;
-    }));
+    });
+    saveStoredEnquiries(updated);
+    setEnquiries(updated);
   };
 
   // Handler for accepting quotation
   const handleConfirmAccept = () => {
-    setEnquiries(prev => prev.map(item => {
-      if (item.id === selectedEnquiryId) {
+    const targetId = currentEnquiry.enquiryId || currentEnquiry.id || selectedEnquiryId;
+    const updated = enquiries.map(item => {
+      if ((item.enquiryId || item.id) === targetId) {
         return { ...item, status: 'accepted' };
       }
       return item;
-    }));
+    });
+    saveStoredEnquiries(updated);
+    setEnquiries(updated);
     setIsAcceptModalOpen(false);
   };
 
   // Handler for rejecting quotation
   const handleConfirmReject = () => {
-    setEnquiries(prev => prev.map(item => {
-      if (item.id === selectedEnquiryId) {
+    const targetId = currentEnquiry.enquiryId || currentEnquiry.id || selectedEnquiryId;
+    const updated = enquiries.map(item => {
+      if ((item.enquiryId || item.id) === targetId) {
         return { ...item, status: 'rejected', rejectReason };
       }
       return item;
-    }));
+    });
+    saveStoredEnquiries(updated);
+    setEnquiries(updated);
     setIsRejectModalOpen(false);
   };
 
   // Status Badge Helper Component
   const renderStatusBadge = (status) => {
     switch (status) {
+      case 'Enquiry Submitted':
+      case 'submitted':
+      case 'new':
+        return (
+          <span className="status-pill status-review">
+            <Clock size={12} />
+            <span>Enquiry Submitted</span>
+          </span>
+        );
       case 'under_review':
         return (
           <span className="status-pill status-review">
@@ -183,108 +225,271 @@ export default function ClientPortalView({
   // =========================================================================
   // SCREEN 1 — CLIENT LOGIN SCREEN (If not logged in)
   // =========================================================================
+  // =========================================================================
+  // SCREEN 1 — CLIENT AUTHENTICATION SCREEN (Login / Registration)
+  // =========================================================================
   if (!isLoggedIn) {
     return (
-      <div className="section" style={{ paddingTop: '3.5rem', paddingBottom: '6rem', backgroundColor: 'var(--bg-main)', minHeight: '80vh', display: 'flex', alignItems: 'center' }}>
-        <div className="container" style={{ maxWidth: '460px' }}>
+      <div className="section" style={{ paddingTop: '3rem', paddingBottom: '6rem', backgroundColor: 'var(--bg-main)', minHeight: '85vh', display: 'flex', alignItems: 'center' }}>
+        <div className="container" style={{ maxWidth: '480px' }}>
           
+          {/* Back to Public Website Link */}
+          <div style={{ marginBottom: '1.25rem' }}>
+            <button 
+              onClick={() => setActiveView('home')}
+              className="btn btn-secondary btn-sm"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', color: 'var(--text-secondary)', backgroundColor: '#FFFFFF', border: '1px solid var(--border-light)' }}
+            >
+              <ArrowLeft size={15} />
+              <span>Back to Public Website</span>
+            </button>
+          </div>
+
           <div className="card" style={{ padding: '2.5rem', backgroundColor: '#FFFFFF', boxShadow: 'var(--shadow-lg)' }}>
             
             {/* Header Brand & Title */}
-            <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-              <div className="brand-icon" style={{ margin: '0 auto 1rem auto', width: '46px', height: '46px', fontSize: '1.3rem' }}>Z</div>
+            <div style={{ textAlign: 'center', marginBottom: '1.75rem' }}>
+              <div className="brand-icon" style={{ margin: '0 auto 0.85rem auto', width: '46px', height: '46px', fontSize: '1.3rem' }}>Z</div>
               <div style={{ fontSize: '0.8125rem', fontWeight: 800, color: 'var(--burgundy-main)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
                 ZENQUE TECH CLIENT PORTAL
               </div>
               <h1 style={{ fontSize: '1.85rem', color: 'var(--text-primary)', marginTop: '0.2rem' }}>
-                Welcome Back
+                {authMode === 'login' ? 'Welcome Back' : 'Create Client Account'}
               </h1>
               <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-                Sign in to view your submitted enquiries and track project quotations.
+                {authMode === 'login' 
+                  ? 'Sign in to view your submitted enquiries and track project quotations.' 
+                  : 'Register your client account to track project enquiries and review official quotations.'}
               </p>
             </div>
 
-            {/* Login Form */}
-            <form onSubmit={(e) => { e.preventDefault(); setIsLoggedIn(true); }}>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', marginBottom: '1.5rem' }}>
-                
-                <div>
-                  <label className="form-label" htmlFor="client-email">
-                    Email Address
-                  </label>
-                  <div style={{ position: 'relative' }}>
-                    <Mail size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-                    <input 
-                      id="client-email"
-                      type="email"
-                      className="form-input"
-                      style={{ paddingLeft: '2.25rem' }}
-                      value={loginEmail}
-                      onChange={(e) => setLoginEmail(e.target.value)}
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
-                    <label className="form-label" htmlFor="client-password" style={{ margin: 0 }}>
-                      Password
-                    </label>
-                    <a href="#forgot" onClick={(e) => { e.preventDefault(); alert("Password reset link sent to your registered email."); }} style={{ fontSize: '0.78125rem', color: 'var(--burgundy-main)', fontWeight: 600 }}>
-                      Forgot Password?
-                    </a>
-                  </div>
-                  <div style={{ position: 'relative' }}>
-                    <Lock size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-                    <input 
-                      id="client-password"
-                      type="password"
-                      className="form-input"
-                      style={{ paddingLeft: '2.25rem' }}
-                      value={loginPassword}
-                      onChange={(e) => setLoginPassword(e.target.value)}
-                      required
-                    />
-                  </div>
-                </div>
-
+            {/* Success Message Banner */}
+            {regSuccessMsg && (
+              <div style={{ color: '#047857', backgroundColor: '#D1FAE5', border: '1px solid #6EE7B7', padding: '0.65rem 0.85rem', borderRadius: 'var(--radius-sm)', fontSize: '0.8125rem', marginBottom: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <CheckCircle2 size={16} style={{ flexShrink: 0 }} />
+                <span>{regSuccessMsg}</span>
               </div>
+            )}
 
-              {/* Login Button */}
-              <button type="submit" className="btn btn-primary" style={{ width: '100%', justifyContent: 'center', padding: '0.85rem' }}>
-                <span>Login to Client Portal</span>
-                <ArrowRight size={16} />
-              </button>
-            </form>
+            {/* Error Message Banner */}
+            {loginError && (
+              <div style={{ color: '#DC2626', backgroundColor: '#FEE2E2', border: '1px solid #FCA5A5', padding: '0.65rem 0.85rem', borderRadius: 'var(--radius-sm)', fontSize: '0.8125rem', marginBottom: '1.25rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <AlertCircle size={15} style={{ flexShrink: 0 }} />
+                <span>{loginError}</span>
+              </div>
+            )}
 
-            {/* Demo Hint Banner */}
-            <div style={{ 
-              backgroundColor: 'var(--bg-subtle)', 
-              borderRadius: 'var(--radius-md)', 
-              padding: '0.75rem 1rem', 
-              marginTop: '1.5rem', 
-              fontSize: '0.78125rem',
-              color: 'var(--text-secondary)',
-              border: '1px solid var(--border-light)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.4rem'
-            }}>
-              <ShieldCheck size={14} style={{ color: 'var(--burgundy-main)', flexShrink: 0 }} />
-              <span>Demo Client: Logged in as <strong>alex@nexustech.com</strong></span>
-            </div>
+            {/* LOGIN MODE */}
+            {authMode === 'login' ? (
+              <>
+                <form onSubmit={handleClientLogin}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', marginBottom: '1.5rem' }}>
+                    
+                    <div>
+                      <label className="form-label" htmlFor="client-email">
+                        Email Address
+                      </label>
+                      <div style={{ position: 'relative' }}>
+                        <Mail size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                        <input 
+                          id="client-email"
+                          type="email"
+                          className="form-input"
+                          style={{ paddingLeft: '2.25rem' }}
+                          value={loginEmail}
+                          onChange={(e) => setLoginEmail(e.target.value)}
+                          placeholder="e.g. client@zenquetech.com"
+                          required
+                        />
+                      </div>
+                    </div>
 
-            {/* Public Entry Link */}
-            <div style={{ marginTop: '1.75rem', textAlign: 'center', paddingTop: '1.25rem', borderTop: '1px solid var(--border-light)', fontSize: '0.875rem' }}>
-              <span style={{ color: 'var(--text-secondary)' }}>New to Zenque Tech? </span>
-              <span 
-                onClick={() => setActiveView('enquiry')}
-                style={{ color: 'var(--burgundy-main)', fontWeight: 700, cursor: 'pointer' }}
-              >
-                Submit a Project Enquiry →
-              </span>
-            </div>
+                    <div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+                        <label className="form-label" htmlFor="client-password" style={{ margin: 0 }}>
+                          Password
+                        </label>
+                        <a href="#forgot" onClick={(e) => { e.preventDefault(); alert("Password reset link sent to your registered email."); }} style={{ fontSize: '0.78125rem', color: 'var(--burgundy-main)', fontWeight: 600 }}>
+                          Forgot Password?
+                        </a>
+                      </div>
+                      <div style={{ position: 'relative' }}>
+                        <Lock size={16} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                        <input 
+                          id="client-password"
+                          type="password"
+                          className="form-input"
+                          style={{ paddingLeft: '2.25rem' }}
+                          value={loginPassword}
+                          onChange={(e) => setLoginPassword(e.target.value)}
+                          placeholder="••••••••"
+                          required
+                        />
+                      </div>
+                    </div>
+
+                  </div>
+
+                  {/* Login Button */}
+                  <button type="submit" className="btn btn-primary" style={{ width: '100%', justifyContent: 'center', padding: '0.85rem' }}>
+                    <span>Login to Client Portal</span>
+                    <ArrowRight size={16} />
+                  </button>
+                </form>
+
+                {/* Demo Hint Banner */}
+                <div style={{ 
+                  backgroundColor: 'var(--bg-subtle)', 
+                  borderRadius: 'var(--radius-md)', 
+                  padding: '0.75rem 1rem', 
+                  marginTop: '1.5rem', 
+                  fontSize: '0.78125rem',
+                  color: 'var(--text-secondary)',
+                  border: '1px solid var(--border-light)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '0.4rem'
+                }}>
+                  <ShieldCheck size={14} style={{ color: 'var(--burgundy-main)', flexShrink: 0 }} />
+                  <span>Demo Client: Login with <strong>client@zenquetech.com</strong> / <strong>client123</strong></span>
+                </div>
+
+                {/* Toggle to Registration / Public Entry */}
+                <div style={{ marginTop: '1.75rem', textAlign: 'center', paddingTop: '1.25rem', borderTop: '1px solid var(--border-light)', fontSize: '0.875rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                  <div>
+                    <span style={{ color: 'var(--text-secondary)' }}>Don't have a client account? </span>
+                    <span 
+                      onClick={() => { setAuthMode('register'); setLoginError(''); setRegSuccessMsg(''); }}
+                      style={{ color: 'var(--burgundy-main)', fontWeight: 700, cursor: 'pointer' }}
+                    >
+                      Create an Account
+                    </span>
+                  </div>
+                  <div>
+                    <span 
+                      onClick={() => setActiveView('enquiry')}
+                      style={{ color: 'var(--text-muted)', fontSize: '0.8125rem', cursor: 'pointer', textDecoration: 'underline' }}
+                    >
+                      Submit a new project requirement →
+                    </span>
+                  </div>
+                </div>
+              </>
+            ) : (
+              /* REGISTRATION MODE */
+              <>
+                <form onSubmit={handleClientRegister}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem' }}>
+                    
+                    <div>
+                      <label className="form-label" htmlFor="reg-fullname">
+                        Full Name <span style={{ color: '#DC2626' }}>*</span>
+                      </label>
+                      <input 
+                        id="reg-fullname"
+                        type="text"
+                        className="form-input"
+                        placeholder="e.g. Alex Morgan"
+                        value={registerFormData.fullName}
+                        onChange={(e) => setRegisterFormData({ ...registerFormData, fullName: e.target.value })}
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="form-label" htmlFor="reg-company">
+                        Company Name
+                      </label>
+                      <input 
+                        id="reg-company"
+                        type="text"
+                        className="form-input"
+                        placeholder="e.g. Nexus Tech Ltd."
+                        value={registerFormData.companyName}
+                        onChange={(e) => setRegisterFormData({ ...registerFormData, companyName: e.target.value })}
+                      />
+                    </div>
+
+                    <div>
+                      <label className="form-label" htmlFor="reg-email">
+                        Work Email Address <span style={{ color: '#DC2626' }}>*</span>
+                      </label>
+                      <input 
+                        id="reg-email"
+                        type="email"
+                        className="form-input"
+                        placeholder="e.g. alex@nexustech.com"
+                        value={registerFormData.email}
+                        onChange={(e) => setRegisterFormData({ ...registerFormData, email: e.target.value })}
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="form-label" htmlFor="reg-phone">
+                        Phone Number
+                      </label>
+                      <input 
+                        id="reg-phone"
+                        type="tel"
+                        className="form-input"
+                        placeholder="e.g. +91 98765 43210"
+                        value={registerFormData.phone}
+                        onChange={(e) => setRegisterFormData({ ...registerFormData, phone: e.target.value })}
+                      />
+                    </div>
+
+                    <div>
+                      <label className="form-label" htmlFor="reg-password">
+                        Password <span style={{ color: '#DC2626' }}>*</span>
+                      </label>
+                      <input 
+                        id="reg-password"
+                        type="password"
+                        className="form-input"
+                        placeholder="At least 6 characters"
+                        value={registerFormData.password}
+                        onChange={(e) => setRegisterFormData({ ...registerFormData, password: e.target.value })}
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="form-label" htmlFor="reg-confirmpassword">
+                        Confirm Password <span style={{ color: '#DC2626' }}>*</span>
+                      </label>
+                      <input 
+                        id="reg-confirmpassword"
+                        type="password"
+                        className="form-input"
+                        placeholder="Re-enter password"
+                        value={registerFormData.confirmPassword}
+                        onChange={(e) => setRegisterFormData({ ...registerFormData, confirmPassword: e.target.value })}
+                        required
+                      />
+                    </div>
+
+                  </div>
+
+                  {/* Register Button */}
+                  <button type="submit" className="btn btn-primary" style={{ width: '100%', justifyContent: 'center', padding: '0.85rem' }}>
+                    <span>Create Client Account</span>
+                    <ArrowRight size={16} />
+                  </button>
+                </form>
+
+                {/* Toggle to Login */}
+                <div style={{ marginTop: '1.5rem', textAlign: 'center', paddingTop: '1.25rem', borderTop: '1px solid var(--border-light)', fontSize: '0.875rem' }}>
+                  <span style={{ color: 'var(--text-secondary)' }}>Already have an account? </span>
+                  <span 
+                    onClick={() => { setAuthMode('login'); setLoginError(''); }}
+                    style={{ color: 'var(--burgundy-main)', fontWeight: 700, cursor: 'pointer' }}
+                  >
+                    Login to Portal
+                  </span>
+                </div>
+              </>
+            )}
 
           </div>
 
@@ -666,9 +871,9 @@ export default function ClientPortalView({
                 <div className="timeline-line active" />
 
                 {/* Step 2: Under Review */}
-                <div className={`timeline-step ${currentEnquiry.status !== 'under_review' ? 'completed' : 'active'}`}>
+                <div className={`timeline-step ${!['Enquiry Submitted', 'submitted', 'new', 'under_review'].includes(currentEnquiry.status) ? 'completed' : currentEnquiry.status === 'under_review' ? 'active' : ''}`}>
                   <div className="timeline-node">
-                    {currentEnquiry.status !== 'under_review' ? <Check size={14} /> : '2'}
+                    {!['Enquiry Submitted', 'submitted', 'new', 'under_review'].includes(currentEnquiry.status) ? <Check size={14} /> : '2'}
                   </div>
                   <div className="timeline-content">
                     <div className="timeline-title">Under Review</div>
@@ -676,7 +881,7 @@ export default function ClientPortalView({
                   </div>
                 </div>
 
-                <div className={`timeline-line ${currentEnquiry.status !== 'under_review' && currentEnquiry.status !== 'new' ? 'active' : ''}`} />
+                <div className={`timeline-line ${!['Enquiry Submitted', 'submitted', 'new', 'under_review'].includes(currentEnquiry.status) ? 'active' : ''}`} />
 
                 {/* Step 3: Quotation Sent */}
                 <div className={`timeline-step ${['accepted', 'approved', 'project_started', 'completed'].includes(currentEnquiry.status) ? 'completed' : currentEnquiry.status === 'quotation_sent' ? 'active' : ''}`}>
@@ -731,7 +936,7 @@ export default function ClientPortalView({
               </div>
 
               {/* Developer Prototype Toggle for ZT-10234 status */}
-              {currentEnquiry.id === 'ZT-10234' && currentEnquiry.status === 'under_review' && (
+              {(currentEnquiry.enquiryId || currentEnquiry.id) === 'ZT-10234' && currentEnquiry.status === 'under_review' && (
                 <div style={{ 
                   backgroundColor: 'var(--bg-subtle)', 
                   border: '1px dashed var(--border-dark)', 
@@ -765,14 +970,14 @@ export default function ClientPortalView({
             {/* QUOTATION CALLOUT / PREVIEW BOX */}
             {/* ========================================================================= */}
             <div style={{ marginBottom: '2rem' }}>
-              {currentEnquiry.status === 'under_review' ? (
+              {!currentEnquiry.quotation ? (
                 <div className="card" style={{ padding: '1.75rem', backgroundColor: 'var(--bg-subtle)', border: '1px solid var(--border-light)' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: 'var(--text-primary)', marginBottom: '0.5rem' }}>
                     <Clock size={20} style={{ color: 'var(--burgundy-main)' }} />
                     <h3 style={{ fontSize: '1.15rem' }}>Quotation Not Available Yet</h3>
                   </div>
                   <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
-                    Zenque Tech solution architects are reviewing your project requirements. You will receive an automated notification as soon as formal quotation QT-{currentEnquiry.id.split('-')[1]} is issued.
+                    Zenque Tech solution architects are reviewing your project requirements. You will receive an automated notification as soon as formal quotation QT-{((currentEnquiry.enquiryId || currentEnquiry.id || '').split('-')[1]) || '10234'} is issued.
                   </p>
                 </div>
               ) : (
