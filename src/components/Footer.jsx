@@ -66,17 +66,7 @@ export default function Footer({ setActiveView, onRequestClick }) {
             </ul>
           </div>
 
-          {/* Request CTA Card */}
-          <div style={{ backgroundColor: 'var(--bg-dark-surface)', padding: '1.5rem', borderRadius: 'var(--radius-md)', border: '1px solid var(--border-dark)' }}>
-            <h4 style={{ color: '#FFFFFF', fontSize: '1.1rem', marginBottom: '0.5rem' }}>Ready to Request a Service?</h4>
-            <p style={{ color: 'var(--text-on-dark-muted)', fontSize: '0.85rem', marginBottom: '1.25rem' }}>
-              Select a service or package to generate your custom quotation reference.
-            </p>
-            <button className="btn btn-primary btn-sm" style={{ width: '100%' }} onClick={onRequestClick}>
-              <span>Start Project Request</span>
-              <ArrowUpRight size={14} />
-            </button>
-          </div>
+
 
         </div>
 

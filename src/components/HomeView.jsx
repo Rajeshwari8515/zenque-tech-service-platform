@@ -1,20 +1,52 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { ArrowRight, ChevronRight, Layers, Cpu, Code, Sparkles, Shield, Palette } from 'lucide-react';
-import { SERVICES_DATA, PROCESS_STEPS } from '../data/mockServices';
+import { PROCESS_STEPS } from '../data/mockServices';
+import { getServices } from '../api/serviceApi';
 
 export default function HomeView({ setActiveView, setSelectedService, onRequestClick }) {
-  
-  const getServiceIcon = (id) => {
-    switch (id) {
-      case 'web-development': return <Layers size={22} style={{ color: 'var(--burgundy-main)' }} />;
-      case 'mobile-development': return <Cpu size={22} style={{ color: 'var(--burgundy-main)' }} />;
-      case 'uiux-design': return <Palette size={22} style={{ color: 'var(--burgundy-main)' }} />;
-      case 'aiml-solutions': return <Sparkles size={22} style={{ color: 'var(--burgundy-main)' }} />;
-      case 'custom-software': return <Code size={22} style={{ color: 'var(--burgundy-main)' }} />;
-      case 'digital-solutions': return <Shield size={22} style={{ color: 'var(--burgundy-main)' }} />;
-      default: return <Layers size={22} style={{ color: 'var(--burgundy-main)' }} />;
+  const [services, setServices] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  const getServiceIcon = (serviceName) => {
+    switch (serviceName) {
+      case 'Web Development':
+        return <Layers size={24} style={{ color: 'var(--burgundy-main)' }} />;
+      case 'Mobile App Development':
+        return <Cpu size={24} style={{ color: 'var(--burgundy-main)' }} />;
+      case 'UI/UX Design':
+        return <Palette size={24} style={{ color: 'var(--burgundy-main)' }} />;
+      case 'AI & ML Solutions':
+        return <Sparkles size={24} style={{ color: 'var(--burgundy-main)' }} />;
+      case 'Custom Software':
+        return <Code size={24} style={{ color: 'var(--burgundy-main)' }} />;
+      case 'Digital Solutions':
+        return <Shield size={24} style={{ color: 'var(--burgundy-main)' }} />;
+      default:
+        return <Layers size={24} style={{ color: 'var(--burgundy-main)' }} />;
     }
   };
+
+  useEffect(() => {
+    async function loadServices() {
+      try {
+        const data = await getServices();
+        const formattedServices = data.map((service) => ({
+          id: service.serviceId,
+          serviceId: service.serviceId,
+          title: service.serviceName,
+          serviceName: service.serviceName,
+          shortDescription: service.description,
+          description: service.description
+        }));
+        setServices(formattedServices);
+      } catch (err) {
+        console.error('Error loading services for home view:', err);
+      } finally {
+        setLoading(false);
+      }
+    }
+    loadServices();
+  }, []);
 
   return (
     <div>
@@ -39,12 +71,8 @@ export default function HomeView({ setActiveView, setSelectedService, onRequestC
               
               <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
                 <button className="btn btn-primary btn-lg" onClick={() => setActiveView('services')}>
-                  <span>Request a Service</span>
-                  <ArrowRight size={18} />
-                </button>
-                
-                <button className="btn btn-secondary btn-lg" onClick={() => setActiveView('services')}>
                   <span>Explore Services</span>
+                  <ArrowRight size={18} />
                 </button>
               </div>
             </div>
@@ -95,36 +123,46 @@ export default function HomeView({ setActiveView, setSelectedService, onRequestC
             </p>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '2rem' }}>
-            {SERVICES_DATA.map((service) => (
-              <div key={service.id} className="card" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '1rem' }}>
-                  <div style={{ padding: '0.65rem', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--burgundy-light)' }}>
-                    {getServiceIcon(service.id)}
+          {loading ? (
+            <p style={{ textAlign: 'center', color: 'var(--text-secondary)' }}>Loading services...</p>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '2rem' }}>
+              {services.map((service) => (
+                <div key={service.serviceId} className="card" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                  
+                  {/* Service Header */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem', marginBottom: '1.25rem' }}>
+                    <div style={{ padding: '0.75rem', borderRadius: 'var(--radius-md)', backgroundColor: 'var(--burgundy-light)' }}>
+                      {getServiceIcon(service.serviceName || service.title)}
+                    </div>
+                    <h3 style={{ fontSize: '1.35rem', color: 'var(--text-primary)' }}>
+                      {service.title}
+                    </h3>
                   </div>
-                  <h3 style={{ fontSize: '1.2rem', color: 'var(--text-primary)' }}>{service.title}</h3>
-                </div>
 
-                <p style={{ fontSize: '0.9rem', color: 'var(--text-secondary)', marginBottom: '1.75rem', flexGrow: 1, lineHeight: '1.5' }}>
-                  {service.shortDescription}
-                </p>
+                  {/* Service Description */}
+                  <p style={{ fontSize: '0.925rem', color: 'var(--text-secondary)', marginBottom: '2rem', flexGrow: 1, lineHeight: '1.6' }}>
+                    {service.shortDescription}
+                  </p>
 
-                <div>
-                  <button 
-                    className="btn btn-secondary btn-sm" 
-                    style={{ width: '100%', justifyContent: 'space-between' }}
-                    onClick={() => {
-                      setSelectedService(service);
-                      setActiveView('service-detail');
-                    }}
-                  >
-                    <span>View Details</span>
-                    <ChevronRight size={16} />
-                  </button>
+                  {/* View Details */}
+                  <div>
+                    <button 
+                      className="btn btn-primary btn-sm" 
+                      style={{ width: '100%', justifyContent: 'space-between' }}
+                      onClick={() => {
+                        setSelectedService(service);
+                        setActiveView('service-detail');
+                      }}
+                    >
+                      <span>View Details</span>
+                      <ChevronRight size={16} />
+                    </button>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
       </section>
 
@@ -161,7 +199,7 @@ export default function HomeView({ setActiveView, setSelectedService, onRequestC
             Select a service or request a custom quotation tailored to your requirements.
           </p>
           <button className="btn btn-dark btn-lg" onClick={() => setActiveView('services')}>
-            <span>Request a Service</span>
+            <span>Explore Services</span>
             <ArrowRight size={16} />
           </button>
         </div>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   LayoutDashboard, 
   FileText, 
@@ -32,7 +32,20 @@ import {
   ToggleRight
 } from 'lucide-react';
 import { SERVICES_DATA } from '../data/mockServices';
-import { getStoredEnquiries, saveStoredEnquiries } from '../utils/enquiryStorage';
+import { getStoredEnquiries, saveStoredEnquiries, formatConsultationSchedule } from '../utils/enquiryStorage';
+import { loginUser, getAllUsers, getUserById, clearAuthSession, getAuthToken } from '../api/authApi';
+import { 
+  getAllEnquiries, 
+  updateEnquiryStatus as updateEnquiryStatusApi, 
+  createQuotation as createQuotationApi, 
+  getQuotationByEnquiry, 
+  updateQuotationStatus as updateQuotationStatusApi,
+  getServices,
+  getConsultationByEnquiry,
+  createConsultation as createConsultationApi,
+  scheduleConsultation as scheduleConsultationApi
+} from '../api/serviceApi';
+import { getEnquiryFiles } from '../api/fileApi';
 
 export default function AdminPortalView({ 
   setActiveView,
@@ -43,9 +56,36 @@ export default function AdminPortalView({
 }) {
   // Admin Login Authentication State (Default logged out for role separation)
   const [isAdminLoggedIn, setIsAdminLoggedIn] = useState(false);
-  const [adminEmail, setAdminEmail] = useState('admin@zenquetech.com');
-  const [adminPassword, setAdminPassword] = useState('admin123');
+  const [adminEmail, setAdminEmail] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
   const [adminLoginError, setAdminLoginError] = useState('');
+  const [adminUser, setAdminUser] = useState(null);
+
+  useEffect(() => {
+    const token = getAuthToken();
+    const savedUser = localStorage.getItem('zenque_current_user');
+    if (token && savedUser) {
+      try {
+        const parsed = JSON.parse(savedUser);
+        if (parsed && parsed.role === 'ADMIN') {
+          setAdminUser(parsed);
+          setIsAdminLoggedIn(true);
+        }
+      } catch (e) {}
+    }
+
+    const handleUnauthorized = () => {
+      setAdminUser(null);
+      setIsAdminLoggedIn(false);
+      setAdminLoginError("Session expired or authentication invalid. Please sign in again.");
+    };
+
+    window.addEventListener('zenque_auth_unauthorized', handleUnauthorized);
+    return () => {
+      window.removeEventListener('zenque_auth_unauthorized', handleUnauthorized);
+    };
+  }, []);
+
 
   // Active Admin Sub-Tab
   // ('dashboard' | 'enquiries' | 'enquiry-detail' | 'create-quotation' | 'quotations' | 'consultations' | 'services' | 'packages' | 'clients')
@@ -70,7 +110,16 @@ export default function AdminPortalView({
   // Modal States
   const [isSendQuotationModalOpen, setIsSendQuotationModalOpen] = useState(false);
   const [isStatusUpdateModalOpen, setIsStatusUpdateModalOpen] = useState(false);
-  const [newStatus, setNewStatus] = useState('under_review');
+  const [isScheduleModalOpen, setIsScheduleModalOpen] = useState(false);
+  const [scheduleFormData, setScheduleFormData] = useState({
+    preferredDate: '',
+    preferredTime: '',
+    notes: ''
+  });
+  const [scheduleErrors, setScheduleErrors] = useState({});
+  const [newStatus, setNewStatus] = useState('Under Review');
+  const [isLoading, setIsLoading] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
   // New Quotation Form State (for Screen 5: Create Quotation)
   const [quotationFormData, setQuotationFormData] = useState({
@@ -92,81 +141,243 @@ export default function AdminPortalView({
   ]);
 
   // Consultations Management State (Screen 9)
-  const [consultationsList, setConsultationsList] = useState([
-    { id: 'CON-101', enquiryId: 'ZT-10234', client: 'Alex Morgan (Nexus Tech)', date: '15 Sep 2026', time: '10:00 AM - 12:00 PM', status: 'Scheduled' },
-    { id: 'CON-102', enquiryId: 'ZT-10236', client: 'Sarah Jenkins (Apex Corp)', date: '18 Sep 2026', time: '02:00 PM - 04:00 PM', status: 'Requested' }
-  ]);
+  const [consultationsList, setConsultationsList] = useState([]);
 
   // Current active enquiry object from shared state
   const currentEnquiry = enquiries.find(e => (e.enquiryId || e.id) === selectedEnquiryId) || enquiries[0] || {};
 
-  // Handler for saving/sending quotation
-  const handleSendQuotationSubmit = () => {
-    const calculatedTotal = parseInt(quotationFormData.baseCost || '0', 10) + parseInt(quotationFormData.additionalCost || '0', 10);
-    const formattedTotal = '₹' + calculatedTotal.toLocaleString('en-IN');
-    const targetId = currentEnquiry.enquiryId || currentEnquiry.id || selectedEnquiryId;
-    const numPart = targetId.includes('-') ? targetId.split('-')[1] : '10234';
+  // Fetch real backend enquiries
+  const fetchBackendEnquiries = async () => {
+    try {
+      setIsLoading(true);
+      const [backendData, srvsData, usersData] = await Promise.all([
+        getAllEnquiries().catch(() => null),
+        getServices().catch(() => []),
+        getAllUsers().catch(() => [])
+      ]);
 
-    const updated = enquiries.map(item => {
-      if ((item.enquiryId || item.id) === targetId) {
-        return {
-          ...item,
-          status: 'quotation_sent',
-          quotation: {
-            id: `QT-${numPart}`,
-            issuedDate: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
-            validUntil: quotationFormData.validUntilDate || '30 Sep 2026',
-            totalAmount: formattedTotal,
-            architectNotes: quotationFormData.architectNotes,
-            breakdown: [
-              { desc: `${item.serviceTitle || item.service} (${item.packageTier || item.package}) Core Scope`, cost: '₹' + parseInt(quotationFormData.baseCost || '0', 10).toLocaleString('en-IN') },
-              { desc: 'API Integration & Cloud Infrastructure Setup', cost: '₹' + parseInt(quotationFormData.additionalCost || '0', 10).toLocaleString('en-IN') }
-            ]
-          }
-        };
+      const userMap = {};
+      if (Array.isArray(usersData)) {
+        usersData.forEach(u => {
+          if (u.userId) userMap[u.userId] = u;
+        });
       }
-      return item;
-    });
 
-    saveStoredEnquiries(updated);
-    if (setEnquiries) setEnquiries(updated);
-    setIsSendQuotationModalOpen(false);
-    setAdminTab('enquiry-detail');
+      if (backendData && Array.isArray(backendData) && backendData.length > 0) {
+        const srvMap = {};
+        if (Array.isArray(srvsData)) {
+          srvsData.forEach(s => { srvMap[s.serviceId] = s.serviceName; });
+        }
+
+        const enriched = await Promise.all(backendData.map(async (item) => {
+          let quotation = null;
+          try {
+            quotation = await getQuotationByEnquiry(item.enquiryId);
+          } catch (e) {
+            // No quotation found
+          }
+
+          let consultation = null;
+          try {
+            consultation = await getConsultationByEnquiry(item.enquiryId);
+          } catch (e) {
+            // No consultation found
+          }
+
+          let userInfo = userMap[item.userId] || null;
+          if (!userInfo && item.userId) {
+            try {
+              userInfo = await getUserById(item.userId);
+            } catch (uErr) {}
+          }
+
+          const srvId = item.serviceId;
+          const pkgId = item.packageId;
+          const serviceTitle = srvMap[srvId] || (srvId === 1 ? 'Web Development' : srvId === 2 ? 'Mobile App Development' : srvId === 3 ? 'UI/UX Design' : srvId === 4 ? 'Cloud & Infrastructure' : 'Custom Software');
+          const packageTier = pkgId === 1 || pkgId === 4 || pkgId === 7 || pkgId === 10 ? 'Basic Package' : pkgId === 2 || pkgId === 5 || pkgId === 8 || pkgId === 11 ? 'Standard Package' : 'Premium Package';
+
+          const formattedQuotation = quotation ? {
+            id: quotation.quotationId,
+            quotationId: quotation.quotationId,
+            issuedDate: quotation.issuedDate ? new Date(quotation.issuedDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+            validUntil: quotation.validity || 'Valid 30 Days',
+            totalAmount: '₹' + (quotation.totalAmount ? quotation.totalAmount.toLocaleString('en-IN') : '0'),
+            architectNotes: quotation.notes,
+            serviceCost: quotation.serviceCost,
+            additionalCost: quotation.additionalCost,
+            status: quotation.status,
+            breakdown: [
+              { desc: `${serviceTitle} (${packageTier}) Core Scope`, cost: '₹' + (quotation.serviceCost ? quotation.serviceCost.toLocaleString('en-IN') : '0') },
+              { desc: 'API Integration & Cloud Infrastructure Setup', cost: '₹' + (quotation.additionalCost ? quotation.additionalCost.toLocaleString('en-IN') : '0') }
+            ]
+          } : null;
+
+          let enquiryFilesList = [];
+          try {
+            const rawFiles = await getEnquiryFiles(item.enquiryId);
+            if (Array.isArray(rawFiles)) {
+              enquiryFilesList = rawFiles.map(f => ({
+                id: f.fileId,
+                name: f.fileName,
+                filePath: f.filePath,
+                size: 'Uploaded',
+                uploadedAt: f.uploadedAt
+              }));
+            }
+          } catch (fileErr) {
+            // Ignore if no files
+          }
+
+          const clientNameVal = userInfo?.name || (item.userId === 1 ? 'Alex Morgan' : item.userId === 3 ? 'Sarah Jenkins' : `Client #${item.userId || 'N/A'}`);
+          const companyNameVal = (userInfo?.companyName && userInfo.companyName.trim()) ? userInfo.companyName.trim() : 'Not provided';
+          const emailVal = userInfo?.email || (item.userId === 1 ? 'alex@abctechnologies.com' : item.userId === 3 ? 'sarah@apexsolutions.com' : 'client@zenquetech.com');
+          const phoneVal = userInfo?.phone || item.phone || '+91 98765 43210';
+
+          const rawItemDate = item.createdAt || item.created_at || item.submittedDate;
+          const displayDate = rawItemDate ? new Date(rawItemDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+
+          return {
+            ...item,
+            enquiryId: item.enquiryId,
+            id: item.enquiryId,
+            userId: item.userId,
+            serviceId: item.serviceId,
+            packageId: item.packageId,
+            service: serviceTitle,
+            serviceTitle: serviceTitle,
+            package: packageTier,
+            packageTier: packageTier,
+            projectName: item.projectName || 'Enterprise Portal',
+            projectDescription: item.description || 'Custom web application scope',
+            description: item.description || '',
+            requiredFeatures: item.requiredFeatures || '',
+            additionalRequirements: item.additionalRequirements || '',
+            budget: item.budget || '₹50K – ₹1L',
+            timeline: item.timeline || '2–4 Weeks',
+            status: item.status || 'Enquiry Submitted',
+            consultationObj: consultation,
+            preferredDate: consultation?.preferredDate || item.preferredDate || '',
+            preferredTime: consultation?.preferredTime || item.preferredTime || '',
+            fullName: clientNameVal,
+            clientName: clientNameVal,
+            companyName: companyNameVal,
+            email: emailVal,
+            phone: phoneVal,
+            submittedDate: displayDate,
+            createdAt: rawItemDate || new Date().toISOString(),
+            files: enquiryFilesList.length > 0 ? enquiryFilesList : (item.files || []),
+            quotation: formattedQuotation
+          };
+        }));
+
+        setLocalEnquiries(enriched);
+        saveStoredEnquiries(enriched);
+        if (setEnquiries) setEnquiries(enriched);
+
+        const realConsultations = enriched
+          .filter(item => item.consultationObj || item.preferredDate)
+          .map((item, idx) => {
+            const cObj = item.consultationObj;
+            const dateVal = cObj?.preferredDate || item.preferredDate;
+            const timeVal = cObj?.preferredTime || item.preferredTime;
+            const formattedSched = formatConsultationSchedule(dateVal, timeVal);
+            return {
+              id: cObj?.consultationId ? `CON-${cObj.consultationId}` : `CON-${100 + idx + 1}`,
+              enquiryId: item.enquiryId || item.id,
+              client: `${item.fullName}${item.companyName && item.companyName !== 'Not provided' ? ` (${item.companyName})` : ''}`,
+              date: formattedSched.includes(',') ? formattedSched.split(',')[0].trim() : (formattedSched || 'Pending'),
+              time: formattedSched.includes(',') ? formattedSched.split(',')[1].trim() : (timeVal || 'Pending'),
+              status: cObj?.status || 'Requested'
+            };
+          });
+        if (realConsultations.length > 0) {
+          setConsultationsList(realConsultations);
+        }
+      }
+    } catch (err) {
+      console.error("Error fetching backend enquiries:", err);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isAdminLoggedIn) {
+      fetchBackendEnquiries();
+    }
+  }, [isAdminLoggedIn]);
+
+  // Handler for saving/sending quotation
+  const handleSendQuotationSubmit = async () => {
+    const targetId = currentEnquiry.enquiryId || currentEnquiry.id || selectedEnquiryId;
+    const sCost = parseFloat(quotationFormData.baseCost || '0');
+    const aCost = parseFloat(quotationFormData.additionalCost || '0');
+
+    try {
+      setIsSaving(true);
+      // 1. Create quotation via POST /api/quotations
+      const createdQuotation = await createQuotationApi({
+        enquiryId: targetId,
+        serviceCost: sCost,
+        additionalCost: aCost,
+        validity: quotationFormData.validUntilDate || '2026-09-30',
+        notes: quotationFormData.architectNotes,
+        status: 'Draft'
+      });
+
+      const qId = createdQuotation.quotationId || (targetId.startsWith('ZT-') ? `QT-${targetId.substring(3)}` : 'QT-10234');
+
+      // 2. Send quotation via PUT /api/quotations/{quotationId}/status with {"status":"Sent"}
+      await updateQuotationStatusApi(qId, 'Sent');
+
+      // 3. Re-fetch real backend data to update state
+      await fetchBackendEnquiries();
+      setIsSendQuotationModalOpen(false);
+      setAdminTab('enquiry-detail');
+    } catch (err) {
+      alert("Failed to save & send quotation: " + err.message);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   // Handler for updating enquiry status manually
-  const handleUpdateStatusSubmit = () => {
+  const handleUpdateStatusSubmit = async () => {
     const targetId = currentEnquiry.enquiryId || currentEnquiry.id || selectedEnquiryId;
-    const updated = enquiries.map(item => {
-      if ((item.enquiryId || item.id) === targetId) {
-        return { ...item, status: newStatus };
-      }
-      return item;
-    });
-
-    saveStoredEnquiries(updated);
-    if (setEnquiries) setEnquiries(updated);
-    setIsStatusUpdateModalOpen(false);
+    try {
+      setIsSaving(true);
+      await updateEnquiryStatusApi(targetId, newStatus);
+      await fetchBackendEnquiries();
+      setIsStatusUpdateModalOpen(false);
+    } catch (err) {
+      alert("Failed to update status: " + err.message);
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   // Helper for Status Badge
   const renderStatusBadge = (status) => {
     switch (status) {
       case 'Enquiry Submitted':
-        return <span className="status-pill" style={{ backgroundColor: '#E0F2FE', color: '#0369A1', border: '1px solid #7DD3FC' }}>Enquiry Submitted</span>;
       case 'new':
-        return <span className="status-pill" style={{ backgroundColor: '#E0F2FE', color: '#0369A1', border: '1px solid #7DD3FC' }}>New</span>;
+        return <span className="status-pill" style={{ backgroundColor: '#E0F2FE', color: '#0369A1', border: '1px solid #7DD3FC' }}>Enquiry Submitted</span>;
+      case 'Under Review':
       case 'under_review':
         return <span className="status-pill status-review">Under Review</span>;
+      case 'Quotation Sent':
       case 'quotation_sent':
         return <span className="status-pill status-quotation">Quotation Sent</span>;
+      case 'Client Response':
       case 'accepted':
       case 'approved':
-        return <span className="status-pill status-accepted">Approved (Client Accepted)</span>;
+        return <span className="status-pill status-accepted">Client Response</span>;
       case 'rejected':
         return <span className="status-pill status-rejected">Declined</span>;
+      case 'Project Started':
       case 'project_started':
         return <span className="status-pill" style={{ backgroundColor: '#EDE9FE', color: '#6D28D9', border: '1px solid #C4B5FD', fontWeight: 700 }}>Project Started</span>;
+      case 'Completed':
       case 'completed':
         return <span className="status-pill" style={{ backgroundColor: '#D1FAE5', color: '#047857', border: '1px solid #6EE7B7', fontWeight: 700 }}>Completed</span>;
       default:
@@ -174,10 +385,9 @@ export default function AdminPortalView({
     }
   };
 
-
   // Helper for Client Response Display
   const renderClientResponseBadge = (status) => {
-    if (['accepted', 'approved', 'project_started', 'completed'].includes(status)) {
+    if (['accepted', 'approved', 'project_started', 'completed', 'Client Response', 'Project Started', 'Completed'].includes(status)) {
       return (
         <span style={{ backgroundColor: '#D1FAE5', color: '#047857', padding: '0.25rem 0.65rem', borderRadius: '4px', fontWeight: 800, fontSize: '0.8125rem', border: '1px solid #6EE7B7' }}>
           ACCEPTED
@@ -191,10 +401,10 @@ export default function AdminPortalView({
         </span>
       );
     }
-    if (status === 'quotation_sent') {
+    if (status === 'Quotation Sent' || status === 'quotation_sent') {
       return <span style={{ color: '#D97706', fontWeight: 600, fontSize: '0.8125rem' }}>Quotation Sent (Awaiting Response)</span>;
     }
-    return <span style={{ color: 'var(--text-muted)', fontSize: '0.8125rem' }}>Under Review</span>;
+    return <span style={{ color: 'var(--text-muted)', fontSize: '0.8125rem' }}>{status || 'Under Review'}</span>;
   };
 
 
@@ -204,7 +414,7 @@ export default function AdminPortalView({
   // =========================================================================
   if (!isAdminLoggedIn) {
     return (
-      <div className="section" style={{ paddingTop: '3rem', paddingBottom: '6rem', backgroundColor: '#0F172A', minHeight: '90vh', display: 'flex', alignItems: 'center' }}>
+      <div className="section" style={{ paddingTop: '3rem', paddingBottom: '6rem', backgroundColor: '#0F172A', minHeight: '100vh', display: 'flex', alignItems: 'center', flex: 1 }}>
         <div className="container" style={{ maxWidth: '440px' }}>
           
           {/* Back to Public Website Navigation */}
@@ -242,15 +452,16 @@ export default function AdminPortalView({
               </div>
             )}
 
-            <form onSubmit={(e) => { 
+            <form onSubmit={async (e) => { 
               e.preventDefault(); 
               setAdminLoginError('');
-              const trimmed = adminEmail.trim().toLowerCase();
-              if (trimmed === 'admin@zenquetech.com' && adminPassword === 'admin123') {
+              try {
+                const userResp = await loginUser(adminEmail.trim(), adminPassword);
+                setAdminUser(userResp);
                 setIsAdminLoggedIn(true);
                 setAdminLoginError('');
-              } else {
-                setAdminLoginError('Invalid credentials. Please use demo login: admin@zenquetech.com / admin123');
+              } catch (err) {
+                setAdminLoginError(err.message || 'Invalid admin credentials.');
               }
             }}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', marginBottom: '1.75rem' }}>
@@ -293,10 +504,6 @@ export default function AdminPortalView({
               </button>
             </form>
 
-            <div style={{ marginTop: '1.75rem', textAlign: 'center', paddingTop: '1.25rem', borderTop: '1px solid #334155', fontSize: '0.8125rem', color: '#94A3B8' }}>
-              <span>Demo Staff Login: <strong>admin@zenquetech.com</strong> / <strong>admin123</strong></span>
-            </div>
-
           </div>
 
         </div>
@@ -309,7 +516,7 @@ export default function AdminPortalView({
   // LOGGED-IN INTERNAL ADMIN MANAGEMENT AREA (Screens 2 to 12)
   // =========================================================================
   return (
-    <div style={{ display: 'flex', minHeight: '90vh', backgroundColor: '#F8FAFC' }}>
+    <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: '#F8FAFC', flex: 1 }}>
       
       {/* ========================================================================= */}
       {/* ADMIN SIDEBAR NAVIGATION */}
@@ -424,7 +631,11 @@ export default function AdminPortalView({
 
           <button 
             className="btn btn-secondary btn-sm"
-            onClick={() => setIsAdminLoggedIn(false)}
+            onClick={() => {
+            clearAuthSession();
+            setAdminUser(null);
+            setIsAdminLoggedIn(false);
+          }}
             style={{ width: '100%', justifyContent: 'center', backgroundColor: 'transparent', color: '#94A3B8', borderColor: 'transparent' }}
           >
             <LogOut size={14} />
@@ -602,7 +813,7 @@ export default function AdminPortalView({
                 </div>
 
                 <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                  {['All', 'Enquiry Submitted', 'Under Review', 'Quotation Sent', 'Accepted', 'Rejected', 'Project Started'].map((st) => (
+                  {['All', 'Enquiry Submitted', 'Under Review', 'Quotation Sent', 'Client Response', 'Project Started', 'Completed'].map((st) => (
                     <button 
                       key={st}
                       className={`btn btn-sm ${statusFilter === st ? 'btn-primary' : 'btn-secondary'}`}
@@ -636,12 +847,12 @@ export default function AdminPortalView({
                     {enquiries
                       .filter(e => {
                         if (statusFilter === 'All') return true;
-                        if (statusFilter === 'Enquiry Submitted') return e.status === 'Enquiry Submitted';
-                        if (statusFilter === 'Under Review') return e.status === 'under_review';
-                        if (statusFilter === 'Quotation Sent') return e.status === 'quotation_sent';
-                        if (statusFilter === 'Accepted') return e.status === 'accepted';
-                        if (statusFilter === 'Rejected') return e.status === 'rejected';
-                        if (statusFilter === 'Project Started') return e.status === 'project_started';
+                        if (statusFilter === 'Enquiry Submitted') return e.status === 'Enquiry Submitted' || e.status === 'new';
+                        if (statusFilter === 'Under Review') return e.status === 'Under Review' || e.status === 'under_review';
+                        if (statusFilter === 'Quotation Sent') return e.status === 'Quotation Sent' || e.status === 'quotation_sent';
+                        if (statusFilter === 'Client Response') return e.status === 'Client Response' || e.status === 'accepted' || e.status === 'approved' || e.status === 'rejected';
+                        if (statusFilter === 'Project Started') return e.status === 'Project Started' || e.status === 'project_started';
+                        if (statusFilter === 'Completed') return e.status === 'Completed' || e.status === 'completed';
                         return true;
                       })
                       .map((enq) => (
@@ -791,7 +1002,26 @@ export default function AdminPortalView({
 
               <button 
                 className="btn btn-secondary"
-                onClick={() => alert(`Consultation for ${currentEnquiry.fullName} scheduled for ${currentEnquiry.preferredDate || '15 Sep 2026'}. Notification sent.`)}
+                onClick={() => {
+                  const cObj = currentEnquiry.consultationObj;
+                  let pDate = cObj?.preferredDate || currentEnquiry.preferredDate || '';
+                  if (!pDate || !/^\d{4}-\d{2}-\d{2}$/.test(pDate)) {
+                    pDate = new Date().toISOString().split('T')[0];
+                  }
+                  let pTime = cObj?.preferredTime || currentEnquiry.preferredTime || '';
+                  if (!pTime || !/^\d{2}:\d{2}/.test(pTime)) {
+                    pTime = '10:00';
+                  } else {
+                    pTime = pTime.substring(0, 5);
+                  }
+                  setScheduleFormData({
+                    preferredDate: pDate,
+                    preferredTime: pTime,
+                    notes: cObj?.notes || ''
+                  });
+                  setScheduleErrors({});
+                  setIsScheduleModalOpen(true);
+                }}
               >
                 <Calendar size={16} />
                 <span>Schedule Consultation Call</span>
@@ -1246,7 +1476,7 @@ export default function AdminPortalView({
             </p>
 
             <div style={{ backgroundColor: 'var(--status-blue-bg)', border: '1px solid #BAE6FD', padding: '0.85rem', borderRadius: 'var(--radius-md)', marginBottom: '1.5rem', fontSize: '0.8125rem', color: '#0369A1' }}>
-              This will update the enquiry status to <strong>Quotation Sent</strong> and make the quotation immediately available for review in the Client Portal (Module 3).
+              Sending the quotation will update the enquiry status to <strong>"Quotation Sent"</strong> and make the quotation available to the client in their Client Portal.
             </div>
 
             <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
@@ -1291,13 +1521,11 @@ export default function AdminPortalView({
                 onChange={(e) => setNewStatus(e.target.value)}
               >
                 <option value="Enquiry Submitted">Enquiry Submitted</option>
-                <option value="new">New</option>
-                <option value="under_review">Under Review</option>
-                <option value="quotation_sent">Quotation Sent</option>
-                <option value="accepted">Approved / Client Accepted</option>
-                <option value="rejected">Declined</option>
-                <option value="project_started">Project Started</option>
-                <option value="completed">Completed</option>
+                <option value="Under Review">Under Review</option>
+                <option value="Quotation Sent">Quotation Sent</option>
+                <option value="Client Response">Client Response</option>
+                <option value="Project Started">Project Started</option>
+                <option value="Completed">Completed</option>
               </select>
             </div>
 
@@ -1310,6 +1538,152 @@ export default function AdminPortalView({
                 <span>Save Status Update</span>
               </button>
             </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* SCHEDULE CONSULTATION MODAL */}
+      {/* ========================================================================= */}
+      {isScheduleModalOpen && (
+        <div className="modal-overlay" onClick={() => setIsScheduleModalOpen(false)}>
+          <div className="modal-card" style={{ maxWidth: '480px' }} onClick={(e) => e.stopPropagation()}>
+            
+            <div className="modal-header">
+              <div>
+                <div style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--burgundy-main)', textTransform: 'uppercase' }}>
+                  Consultation Management
+                </div>
+                <h3 style={{ fontSize: '1.25rem', color: 'var(--text-primary)' }}>
+                  Schedule Consultation
+                </h3>
+              </div>
+              <button className="close-btn" onClick={() => setIsScheduleModalOpen(false)}>
+                <X size={20} />
+              </button>
+            </div>
+
+            <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginBottom: '1.25rem', lineHeight: '1.5' }}>
+              Select consultation date and time for client <strong>{currentEnquiry.fullName}</strong> (Enquiry <strong>{currentEnquiry.enquiryId || currentEnquiry.id}</strong>).
+            </p>
+
+            <form onSubmit={async (e) => {
+              e.preventDefault();
+              const errs = {};
+              const todayStr = new Date().toISOString().split('T')[0];
+
+              if (!scheduleFormData.preferredDate) {
+                errs.preferredDate = 'Consultation date is required.';
+              } else if (scheduleFormData.preferredDate < todayStr) {
+                errs.preferredDate = 'Date cannot be in the past.';
+              }
+
+              if (!scheduleFormData.preferredTime) {
+                errs.preferredTime = 'Consultation time is required.';
+              }
+
+              if (Object.keys(errs).length > 0) {
+                setScheduleErrors(errs);
+                return;
+              }
+
+              setScheduleErrors({});
+              setIsSaving(true);
+
+              try {
+                const targetEnquiryId = currentEnquiry.enquiryId || currentEnquiry.id;
+                const cObj = currentEnquiry.consultationObj;
+
+                let savedConsultation = null;
+                if (cObj && cObj.consultationId) {
+                  savedConsultation = await scheduleConsultationApi(cObj.consultationId, {
+                    preferredDate: scheduleFormData.preferredDate,
+                    preferredTime: scheduleFormData.preferredTime.length === 5 ? `${scheduleFormData.preferredTime}:00` : scheduleFormData.preferredTime,
+                    notes: scheduleFormData.notes || 'Scheduled by Admin',
+                    status: 'Scheduled'
+                  });
+                } else {
+                  savedConsultation = await createConsultationApi({
+                    enquiryId: targetEnquiryId,
+                    preferredDate: scheduleFormData.preferredDate,
+                    preferredTime: scheduleFormData.preferredTime.length === 5 ? `${scheduleFormData.preferredTime}:00` : scheduleFormData.preferredTime,
+                    notes: scheduleFormData.notes || 'Scheduled by Admin',
+                    status: 'Scheduled'
+                  });
+                }
+
+                await fetchBackendEnquiries();
+                setIsScheduleModalOpen(false);
+
+                const formattedSched = formatConsultationSchedule(
+                  savedConsultation?.preferredDate || scheduleFormData.preferredDate,
+                  savedConsultation?.preferredTime || scheduleFormData.preferredTime
+                );
+
+                alert(`Consultation for ${currentEnquiry.fullName} scheduled for ${formattedSched}.`);
+              } catch (err) {
+                console.error('Failed to schedule consultation:', err);
+                alert('Failed to schedule consultation: ' + (err.message || 'Server error'));
+              } finally {
+                setIsSaving(false);
+              }
+            }}>
+              <div style={{ marginBottom: '1.25rem' }}>
+                <label className="form-label">Consultation Date <span style={{ color: '#DC2626' }}>*</span></label>
+                <input
+                  type="date"
+                  className="form-input"
+                  min={new Date().toISOString().split('T')[0]}
+                  value={scheduleFormData.preferredDate}
+                  onChange={(e) => setScheduleFormData({ ...scheduleFormData, preferredDate: e.target.value })}
+                  style={{ borderColor: scheduleErrors.preferredDate ? '#DC2626' : undefined }}
+                />
+                {scheduleErrors.preferredDate && (
+                  <span style={{ fontSize: '0.75rem', color: '#DC2626', marginTop: '0.25rem', display: 'block' }}>
+                    {scheduleErrors.preferredDate}
+                  </span>
+                )}
+              </div>
+
+              <div style={{ marginBottom: '1.25rem' }}>
+                <label className="form-label">Consultation Time <span style={{ color: '#DC2626' }}>*</span></label>
+                <input
+                  type="time"
+                  className="form-input"
+                  value={scheduleFormData.preferredTime}
+                  onChange={(e) => setScheduleFormData({ ...scheduleFormData, preferredTime: e.target.value })}
+                  style={{ borderColor: scheduleErrors.preferredTime ? '#DC2626' : undefined }}
+                />
+                {scheduleErrors.preferredTime && (
+                  <span style={{ fontSize: '0.75rem', color: '#DC2626', marginTop: '0.25rem', display: 'block' }}>
+                    {scheduleErrors.preferredTime}
+                  </span>
+                )}
+              </div>
+
+              <div style={{ marginBottom: '1.5rem' }}>
+                <label className="form-label">Optional Notes</label>
+                <textarea
+                  className="form-input"
+                  rows={3}
+                  placeholder="Add meeting link or discussion notes..."
+                  value={scheduleFormData.notes}
+                  onChange={(e) => setScheduleFormData({ ...scheduleFormData, notes: e.target.value })}
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end' }}>
+                <button type="button" className="btn btn-secondary btn-sm" onClick={() => setIsScheduleModalOpen(false)}>
+                  <span>Cancel</span>
+                </button>
+
+                <button type="submit" className="btn btn-primary btn-sm" disabled={isSaving}>
+                  <Calendar size={14} />
+                  <span>{isSaving ? 'Scheduling...' : 'Schedule Consultation'}</span>
+                </button>
+              </div>
+            </form>
 
           </div>
         </div>

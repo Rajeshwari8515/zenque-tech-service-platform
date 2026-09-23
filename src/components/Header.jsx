@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowRight, UserCheck } from 'lucide-react';
+import { UserCheck, ShieldCheck } from 'lucide-react';
 
 export default function Header({ activeView, setActiveView, onRequestClick, onHowItWorksClick }) {
   return (
@@ -45,20 +45,23 @@ export default function Header({ activeView, setActiveView, onRequestClick, onHo
         </nav>
 
         {/* Right Side Actions */}
-        <div className="nav-actions">
-          <div 
-            className="login-preview-badge" 
+        <div className="nav-actions" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <button 
+            className="btn btn-primary btn-sm" 
             onClick={() => setActiveView('client-portal')}
-            style={{ cursor: 'pointer' }}
             title="Open Client Portal & Account Login"
           >
-            <UserCheck size={14} style={{ color: 'var(--burgundy-main)' }} />
+            <UserCheck size={14} />
             <span>Client Login</span>
-          </div>
+          </button>
 
-          <button className="btn btn-primary btn-sm" onClick={() => setActiveView('services')}>
-            <span>Request a Service</span>
-            <ArrowRight size={14} />
+          <button 
+            className="btn btn-primary btn-sm" 
+            onClick={() => setActiveView('admin-portal')}
+            title="Open Admin Portal Login"
+          >
+            <ShieldCheck size={14} />
+            <span>Admin Login</span>
           </button>
         </div>
 

@@ -15,11 +15,53 @@ import { LayoutDashboard, UserCheck, Globe, ShieldCheck } from 'lucide-react';
 import { getStoredEnquiries, saveStoredEnquiries } from './utils/enquiryStorage';
 
 export default function App() {
-  const [activeView, setActiveView] = useState('home');
+  // Authenticated Client User State with localStorage persistence
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const savedUser = localStorage.getItem('zenque_current_user');
+      const savedToken = localStorage.getItem('zenque_auth_token');
+      return (savedUser && savedToken) ? JSON.parse(savedUser) : null;
+    } catch (e) {
+      return null;
+    }
+  });
+
+  const [activeView, setActiveViewState] = useState(() => {
+    try {
+      const savedView = localStorage.getItem('zenque_active_view');
+      const savedUser = localStorage.getItem('zenque_current_user');
+      const savedToken = localStorage.getItem('zenque_auth_token');
+      if (savedView) return savedView;
+      if (savedUser && savedToken) return 'client-portal';
+      return 'home';
+    } catch (e) {
+      return 'home';
+    }
+  });
+
+  const setActiveView = (view) => {
+    setActiveViewState(view);
+    try {
+      localStorage.setItem('zenque_active_view', view);
+    } catch (e) {}
+  };
+
   const [selectedService, setSelectedService] = useState(SERVICES_DATA[0]);
   const [selectedPackage, setSelectedPackage] = useState(null);
   const [isRequestModalOpen, setIsRequestModalOpen] = useState(false);
   const [selectedEnquiryId, setSelectedEnquiryId] = useState('ZT-10234');
+
+  const handleSetCurrentUser = (user) => {
+    setCurrentUser(user);
+    if (user) {
+      localStorage.setItem('zenque_current_user', JSON.stringify(user));
+    } else {
+      localStorage.removeItem('zenque_current_user');
+      localStorage.removeItem('zenque_auth_token');
+      localStorage.removeItem('zenque_active_view');
+      setActiveViewState('home');
+    }
+  };
 
   // Shared Enquiries State synced with localStorage key "zenque_enquiries"
   const [enquiries, setEnquiriesState] = useState(() => getStoredEnquiries());
@@ -33,6 +75,21 @@ export default function App() {
   };
 
   // Sync state if localStorage changes from any component or window event
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      setCurrentUser(null);
+      localStorage.removeItem('zenque_current_user');
+      localStorage.removeItem('zenque_auth_token');
+      localStorage.removeItem('zenque_active_view');
+      setActiveViewState('home');
+    };
+
+    window.addEventListener('zenque_auth_unauthorized', handleUnauthorized);
+    return () => {
+      window.removeEventListener('zenque_auth_unauthorized', handleUnauthorized);
+    };
+  }, []);
+
   useEffect(() => {
     const handleStorageUpdate = (e) => {
       if (e.type === 'zenque_enquiries_updated' && e.detail) {
@@ -122,6 +179,7 @@ export default function App() {
             enquiries={enquiries}
             setEnquiries={setEnquiries}
             setSelectedEnquiryId={setSelectedEnquiryId}
+            currentUser={currentUser}
           />
         );
       case 'client-portal':
@@ -132,6 +190,8 @@ export default function App() {
             setEnquiries={setEnquiries}
             selectedEnquiryId={selectedEnquiryId}
             setSelectedEnquiryId={setSelectedEnquiryId}
+            currentUser={currentUser}
+            setCurrentUser={handleSetCurrentUser}
           />
         );
       case 'admin-portal':
@@ -180,7 +240,7 @@ export default function App() {
       )}
 
       {/* Active Screen View */}
-      <main style={{ flexGrow: 1 }}>
+      <main style={{ flexGrow: 1, display: 'flex', flexDirection: 'column' }}>
         {renderActiveView()}
       </main>
 

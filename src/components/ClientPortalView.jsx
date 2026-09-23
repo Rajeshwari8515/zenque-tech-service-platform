@@ -24,7 +24,10 @@ import {
   ExternalLink
 } from 'lucide-react';
 import { SERVICES_DATA } from '../data/mockServices';
-import { getStoredEnquiries, saveStoredEnquiries } from '../utils/enquiryStorage';
+import { getStoredEnquiries, saveStoredEnquiries, formatConsultationSchedule } from '../utils/enquiryStorage';
+import { loginUser, registerUser, clearAuthSession, getAuthToken } from '../api/authApi';
+import { getUserEnquiries, getQuotationByEnquiry, updateQuotationStatus, getConsultationByEnquiry } from '../api/serviceApi';
+import { getEnquiryFiles } from '../api/fileApi';
 
 export default function ClientPortalView({ 
   setActiveView,
@@ -33,15 +36,80 @@ export default function ClientPortalView({
   enquiries: propsEnquiries,
   setEnquiries: propsSetEnquiries,
   selectedEnquiryId: propsSelectedEnquiryId,
-  setSelectedEnquiryId: propsSetSelectedEnquiryId
+  setSelectedEnquiryId: propsSetSelectedEnquiryId,
+  currentUser: propsCurrentUser,
+  setCurrentUser: propsSetCurrentUser
 }) {
-  // Authentication state (Default logged out for role separation)
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [internalCurrentUser, setInternalCurrentUser] = useState(() => {
+    try {
+      const saved = localStorage.getItem('zenque_current_user');
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) {
+      return null;
+    }
+  });
+
+  const currentUser = propsCurrentUser !== undefined ? propsCurrentUser : internalCurrentUser;
+
+  const setCurrentUser = (user) => {
+    if (propsSetCurrentUser) propsSetCurrentUser(user);
+    setInternalCurrentUser(user);
+    if (user) {
+      localStorage.setItem('zenque_current_user', JSON.stringify(user));
+    } else {
+      localStorage.removeItem('zenque_current_user');
+    }
+  };
+
+  const [isLoggedIn, setIsLoggedIn] = useState(() => !!currentUser);
+
+  useEffect(() => {
+    const handleUnauthorized = () => {
+      if (propsSetCurrentUser) propsSetCurrentUser(null);
+      setInternalCurrentUser(null);
+      setIsLoggedIn(false);
+      setLoginError("Session expired or authentication invalid. Please sign in again.");
+    };
+
+    window.addEventListener('zenque_auth_unauthorized', handleUnauthorized);
+    return () => {
+      window.removeEventListener('zenque_auth_unauthorized', handleUnauthorized);
+    };
+  }, []);
+
+
+  useEffect(() => {
+    setIsLoggedIn(!!currentUser);
+  }, [currentUser]);
+
+  const [isSubmittingAuth, setIsSubmittingAuth] = useState(false);
   const [authMode, setAuthMode] = useState('login'); // 'login' | 'register'
-  const [loginEmail, setLoginEmail] = useState('client@zenquetech.com');
-  const [loginPassword, setLoginPassword] = useState('client123');
+  const [loginEmail, setLoginEmail] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [regSuccessMsg, setRegSuccessMsg] = useState('');
+
+  // Logout transition state
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [logoutStep, setLogoutStep] = useState('progress'); // 'progress' | 'done'
+
+  const handleLogout = () => {
+    setIsLoggingOut(true);
+    setLogoutStep('progress');
+    
+    setTimeout(() => {
+      setLogoutStep('done');
+      
+      setTimeout(() => {
+        clearAuthSession();
+        if (propsSetCurrentUser) propsSetCurrentUser(null);
+        setInternalCurrentUser(null);
+        setIsLoggedIn(false);
+        setIsLoggingOut(false);
+        if (setActiveView) setActiveView('home');
+      }, 700);
+    }, 600);
+  };
 
   // Client Registration Form State
   const [registerFormData, setRegisterFormData] = useState({
@@ -59,8 +127,11 @@ export default function ClientPortalView({
   // Local fallback state if props not passed
   const [localEnquiries, setLocalEnquiries] = useState(() => getStoredEnquiries());
 
-  const enquiries = propsEnquiries && propsEnquiries.length > 0 ? propsEnquiries : localEnquiries;
-  const setEnquiries = propsSetEnquiries || setLocalEnquiries;
+  // Backend user enquiries state
+  const [backendEnquiries, setBackendEnquiries] = useState([]);
+  const [loadingEnquiries, setLoadingEnquiries] = useState(false);
+  const [enquiryFetchError, setEnquiryFetchError] = useState('');
+  const [reloadTrigger, setReloadTrigger] = useState(0);
 
   // Selected Enquiry ID to view in details/quotation
   const [internalSelectedEnquiryId, setInternalSelectedEnquiryId] = useState(() => {
@@ -73,6 +144,166 @@ export default function ClientPortalView({
     if (propsSetSelectedEnquiryId) propsSetSelectedEnquiryId(id);
   };
 
+  // Fetch backend enquiries for the logged-in client user
+  useEffect(() => {
+    async function loadUserEnquiries() {
+      if (!isLoggedIn) return;
+
+      try {
+        setLoadingEnquiries(true);
+        setEnquiryFetchError('');
+        const rawData = await getUserEnquiries();
+
+        const serviceNameMap = {
+          1: 'Web Development',
+          2: 'Mobile App Development',
+          3: 'UI/UX Design',
+          4: 'AI & ML Solutions',
+          5: 'Custom Software',
+          6: 'Digital Solutions'
+        };
+
+        const packageNameMap = {
+          1: 'Basic Web Package',
+          2: 'Standard Web Application',
+          3: 'Enterprise Platform',
+          4: 'Basic Mobile App',
+          5: 'Standard Mobile Application',
+          6: 'Enterprise Mobile Solution',
+          7: 'UI/UX Audit & Wireframes',
+          8: 'Complete Product Design System',
+          9: 'Enterprise Brand & UX Platform',
+          10: 'Basic AI Integration',
+          11: 'Advanced ML & Predictive Models',
+          12: 'Enterprise AI Ecosystem',
+          13: 'Custom Backend API & Service',
+          14: 'Full-Stack Enterprise Software',
+          15: 'Distributed Enterprise System',
+          16: 'Digital Footprint & SEO Setup',
+          17: 'Full Growth Marketing Engine',
+          18: 'Omnichannel Digital Transformation'
+        };
+
+        const formatted = await Promise.all(rawData.map(async (item) => {
+          const serviceTitle = serviceNameMap[item.serviceId] || 'Technology Service';
+          const pkgName = packageNameMap[item.packageId] || 'Standard Package';
+
+          let quotationObj = null;
+          try {
+            const rawQuot = await getQuotationByEnquiry(item.enquiryId, currentUser.userId);
+            if (rawQuot) {
+              quotationObj = {
+                id: rawQuot.quotationId,
+                quotationId: rawQuot.quotationId,
+                enquiryId: rawQuot.enquiryId,
+                serviceCost: `₹${Number(rawQuot.serviceCost).toLocaleString('en-IN')}`,
+                additionalCost: `₹${Number(rawQuot.additionalCost).toLocaleString('en-IN')}`,
+                totalAmount: `₹${Number(rawQuot.totalAmount).toLocaleString('en-IN')}`,
+                validUntil: rawQuot.validity || 'Valid 30 Days',
+                validity: rawQuot.validity,
+                architectNotes: rawQuot.notes || 'Includes full source code ownership, Docker containerization scripts, and SLA support.',
+                status: rawQuot.status,
+                rawStatus: rawQuot.status,
+                breakdown: [
+                  { desc: 'Core Technology Solution Implementation', cost: `₹${Number(rawQuot.serviceCost).toLocaleString('en-IN')}` },
+                  { desc: 'Additional Features, SLA & Architecture Integration', cost: `₹${Number(rawQuot.additionalCost).toLocaleString('en-IN')}` }
+                ]
+              };
+            }
+          } catch (quotErr) {
+            console.warn(`No quotation for ${item.enquiryId}:`, quotErr.message);
+          }
+
+          let consultationObj = null;
+          try {
+            consultationObj = await getConsultationByEnquiry(item.enquiryId);
+          } catch (conErr) {
+            // No consultation booked for this enquiry
+          }
+
+          let effectiveStatus = item.status || 'Enquiry Submitted';
+          if (quotationObj) {
+            if (quotationObj.status === 'Accepted') {
+              effectiveStatus = 'accepted';
+            } else if (quotationObj.status === 'Rejected') {
+              effectiveStatus = 'rejected';
+            } else if (quotationObj.status === 'Sent' || quotationObj.status === 'Quotation Sent') {
+              effectiveStatus = 'quotation_sent';
+            }
+          }
+
+          let enquiryFilesList = [];
+          try {
+            const rawFiles = await getEnquiryFiles(item.enquiryId);
+            if (Array.isArray(rawFiles)) {
+              enquiryFilesList = rawFiles.map(f => ({
+                id: f.fileId,
+                name: f.fileName,
+                filePath: f.filePath,
+                size: 'Uploaded',
+                uploadedAt: f.uploadedAt
+              }));
+            }
+          } catch (fileErr) {
+            // Ignore if no files
+          }
+
+          return {
+            ...item,
+            id: item.enquiryId,
+            enquiryId: item.enquiryId,
+            service: serviceTitle,
+            serviceTitle: serviceTitle,
+            package: pkgName,
+            packageTier: pkgName,
+            projectName: item.projectName || 'Zenque Technology Project',
+            projectDescription: item.description || `Full-scale ${serviceTitle} implementation.`,
+            requiredFeatures: item.requiredFeatures || '',
+            additionalRequirements: item.additionalRequirements || '',
+            budget: item.budget || '₹50K – ₹1L',
+            timeline: item.timeline || '2–4 Weeks',
+            clientName: currentUser?.name || 'Valued Client',
+            fullName: currentUser?.name || 'Valued Client',
+            companyName: currentUser?.companyName || '',
+            email: currentUser?.email || '',
+            phone: currentUser?.phone || '',
+            status: effectiveStatus,
+            quotation: quotationObj,
+            consultationObj: consultationObj,
+            preferredDate: consultationObj?.preferredDate || item.preferredDate || '',
+            preferredTime: consultationObj?.preferredTime || item.preferredTime || '',
+            files: enquiryFilesList,
+            needsConsultation: consultationObj ? 'yes' : (item.needsConsultation || 'yes'),
+            submittedDate: item.createdAt ? new Date(item.createdAt).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'Recently',
+            createdAt: item.createdAt || new Date().toISOString()
+          };
+        }));
+
+        setBackendEnquiries(formatted);
+
+        if (formatted.length > 0) {
+          const match = formatted.find(e => e.enquiryId === selectedEnquiryId);
+          if (!match) {
+            setSelectedEnquiryId(formatted[0].enquiryId);
+          }
+        }
+      } catch (err) {
+        console.error("Failed to load user enquiries:", err);
+        setEnquiryFetchError("Unable to load user enquiries from server.");
+      } finally {
+        setLoadingEnquiries(false);
+      }
+    }
+
+    loadUserEnquiries();
+  }, [isLoggedIn, currentUser?.userId, reloadTrigger]);
+
+  // When logged in, use backendEnquiries for the authenticated client; otherwise fallback
+  const enquiries = isLoggedIn
+    ? backendEnquiries
+    : (propsEnquiries && propsEnquiries.length > 0 ? propsEnquiries : localEnquiries);
+  const setEnquiries = propsSetEnquiries || setLocalEnquiries;
+
   // Keep state synced with localStorage
   useEffect(() => {
     if (!propsEnquiries) {
@@ -81,32 +312,65 @@ export default function ClientPortalView({
   }, [propsEnquiries]);
 
   // Handler for Client Login Submit
-  const handleClientLogin = (e) => {
+  const handleClientLogin = async (e) => {
     e.preventDefault();
     setLoginError('');
-    const trimmedEmail = loginEmail.trim().toLowerCase();
-    const isDemoEmail = trimmedEmail === 'client@zenquetech.com' || trimmedEmail === 'alex@nexustech.com' || enquiries.some(item => (item.email || '').toLowerCase() === trimmedEmail);
-    
-    if (isDemoEmail && (loginPassword === 'client123' || loginPassword === 'password123' || loginPassword.length > 0)) {
+    setRegSuccessMsg('');
+    setIsSubmittingAuth(true);
+
+    try {
+      const user = await loginUser(loginEmail.trim(), loginPassword);
+      setCurrentUser(user);
       setIsLoggedIn(true);
       setLoginError('');
-    } else {
-      setLoginError('Invalid email or password. Use demo login: client@zenquetech.com / client123');
+    } catch (error) {
+      setLoginError(error.message || 'Invalid email or password.');
+    } finally {
+      setIsSubmittingAuth(false);
     }
   };
 
   // Handler for Client Registration Submit
-  const handleClientRegister = (e) => {
+  const handleClientRegister = async (e) => {
     e.preventDefault();
     setLoginError('');
+    setRegSuccessMsg('');
+
     if (registerFormData.password !== registerFormData.confirmPassword) {
       setLoginError('Passwords do not match.');
       return;
     }
-    setLoginEmail(registerFormData.email || 'client@zenquetech.com');
-    setLoginPassword(registerFormData.password || 'client123');
-    setRegSuccessMsg('Account created successfully! Please sign in with your credentials.');
-    setAuthMode('login');
+
+    setIsSubmittingAuth(true);
+
+    try {
+      const payload = {
+        name: registerFormData.fullName.trim(),
+        companyName: registerFormData.companyName.trim(),
+        email: registerFormData.email.trim(),
+        password: registerFormData.password,
+        phone: registerFormData.phone.trim()
+      };
+
+      const registeredUser = await registerUser(payload);
+
+      setLoginEmail(registeredUser.email || registerFormData.email);
+      setLoginPassword(registerFormData.password);
+      setRegSuccessMsg('Account created successfully! Please sign in with your credentials.');
+      setAuthMode('login');
+      setRegisterFormData({
+        fullName: '',
+        companyName: '',
+        email: '',
+        phone: '',
+        password: '',
+        confirmPassword: ''
+      });
+    } catch (error) {
+      setLoginError(error.message || 'Registration failed.');
+    } finally {
+      setIsSubmittingAuth(false);
+    }
   };
 
   // Modals for Accept/Reject Quotation
@@ -130,31 +394,33 @@ export default function ClientPortalView({
   };
 
   // Handler for accepting quotation
-  const handleConfirmAccept = () => {
-    const targetId = currentEnquiry.enquiryId || currentEnquiry.id || selectedEnquiryId;
-    const updated = enquiries.map(item => {
-      if ((item.enquiryId || item.id) === targetId) {
-        return { ...item, status: 'accepted' };
+  const handleConfirmAccept = async () => {
+    try {
+      const qId = currentEnquiry?.quotation?.id || currentEnquiry?.quotation?.quotationId;
+      if (qId) {
+        await updateQuotationStatus(qId, 'Accepted');
       }
-      return item;
-    });
-    saveStoredEnquiries(updated);
-    setEnquiries(updated);
-    setIsAcceptModalOpen(false);
+      setIsAcceptModalOpen(false);
+      setReloadTrigger(prev => prev + 1);
+    } catch (err) {
+      console.error("Failed to accept quotation:", err);
+      alert(err.message || "Failed to accept quotation");
+    }
   };
 
   // Handler for rejecting quotation
-  const handleConfirmReject = () => {
-    const targetId = currentEnquiry.enquiryId || currentEnquiry.id || selectedEnquiryId;
-    const updated = enquiries.map(item => {
-      if ((item.enquiryId || item.id) === targetId) {
-        return { ...item, status: 'rejected', rejectReason };
+  const handleConfirmReject = async () => {
+    try {
+      const qId = currentEnquiry?.quotation?.id || currentEnquiry?.quotation?.quotationId;
+      if (qId) {
+        await updateQuotationStatus(qId, 'Rejected');
       }
-      return item;
-    });
-    saveStoredEnquiries(updated);
-    setEnquiries(updated);
-    setIsRejectModalOpen(false);
+      setIsRejectModalOpen(false);
+      setReloadTrigger(prev => prev + 1);
+    } catch (err) {
+      console.error("Failed to reject quotation:", err);
+      alert(err.message || "Failed to reject quotation");
+    }
   };
 
   // Status Badge Helper Component
@@ -331,28 +597,11 @@ export default function ClientPortalView({
                   </div>
 
                   {/* Login Button */}
-                  <button type="submit" className="btn btn-primary" style={{ width: '100%', justifyContent: 'center', padding: '0.85rem' }}>
-                    <span>Login to Client Portal</span>
-                    <ArrowRight size={16} />
+                  <button type="submit" className="btn btn-primary" disabled={isSubmittingAuth} style={{ width: '100%', justifyContent: 'center', padding: '0.85rem' }}>
+                    <span>{isSubmittingAuth ? 'Logging in...' : 'Login to Client Portal'}</span>
+                    {!isSubmittingAuth && <ArrowRight size={16} />}
                   </button>
                 </form>
-
-                {/* Demo Hint Banner */}
-                <div style={{ 
-                  backgroundColor: 'var(--bg-subtle)', 
-                  borderRadius: 'var(--radius-md)', 
-                  padding: '0.75rem 1rem', 
-                  marginTop: '1.5rem', 
-                  fontSize: '0.78125rem',
-                  color: 'var(--text-secondary)',
-                  border: '1px solid var(--border-light)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '0.4rem'
-                }}>
-                  <ShieldCheck size={14} style={{ color: 'var(--burgundy-main)', flexShrink: 0 }} />
-                  <span>Demo Client: Login with <strong>client@zenquetech.com</strong> / <strong>client123</strong></span>
-                </div>
 
                 {/* Toggle to Registration / Public Entry */}
                 <div style={{ marginTop: '1.75rem', textAlign: 'center', paddingTop: '1.25rem', borderTop: '1px solid var(--border-light)', fontSize: '0.875rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
@@ -472,9 +721,9 @@ export default function ClientPortalView({
                   </div>
 
                   {/* Register Button */}
-                  <button type="submit" className="btn btn-primary" style={{ width: '100%', justifyContent: 'center', padding: '0.85rem' }}>
-                    <span>Create Client Account</span>
-                    <ArrowRight size={16} />
+                  <button type="submit" className="btn btn-primary" disabled={isSubmittingAuth} style={{ width: '100%', justifyContent: 'center', padding: '0.85rem' }}>
+                    <span>{isSubmittingAuth ? 'Creating Account...' : 'Create Client Account'}</span>
+                    {!isSubmittingAuth && <ArrowRight size={16} />}
                   </button>
                 </form>
 
@@ -575,7 +824,7 @@ export default function ClientPortalView({
 
             <button 
               className="btn btn-secondary btn-sm"
-              onClick={() => setIsLoggedIn(false)}
+              onClick={handleLogout}
               style={{ fontSize: '0.8125rem', padding: '0.35rem 0.65rem' }}
               title="Sign out of Client Account"
             >
@@ -1097,13 +1346,30 @@ export default function ClientPortalView({
                     CONSULTATION PREFERENCE
                   </div>
                   <div style={{ fontSize: '0.875rem', color: 'var(--text-primary)' }}>
-                    {currentEnquiry.needsConsultation === 'yes' ? (
-                      <span style={{ color: 'var(--burgundy-main)', fontWeight: 600 }}>
-                        Requested Call — Preferred Schedule: {currentEnquiry.preferredDate} ({currentEnquiry.preferredTime})
-                      </span>
-                    ) : (
-                      <span>No discovery call requested.</span>
-                    )}
+                    {(() => {
+                      const cObj = currentEnquiry.consultationObj;
+                      const dateVal = cObj?.preferredDate || currentEnquiry.preferredDate;
+                      const timeVal = cObj?.preferredTime || currentEnquiry.preferredTime;
+                      const statusVal = cObj?.status || 'Requested';
+                      const schedStr = formatConsultationSchedule(dateVal, timeVal);
+
+                      if (statusVal === 'Scheduled' || (schedStr && schedStr.trim() !== '')) {
+                        const titleText = statusVal === 'Scheduled' ? 'Scheduled Consultation' : 'Requested Call';
+                        return (
+                          <span style={{ color: 'var(--burgundy-main)', fontWeight: 600 }}>
+                            {titleText} — Preferred Schedule: <strong>{schedStr}</strong> (Status: <strong>{statusVal}</strong>)
+                          </span>
+                        );
+                      }
+                      if (currentEnquiry.needsConsultation === 'yes') {
+                        return (
+                          <span style={{ color: 'var(--burgundy-main)', fontWeight: 600 }}>
+                            Requested Call (Schedule pending)
+                          </span>
+                        );
+                      }
+                      return <span>No discovery call requested.</span>;
+                    })()}
                   </div>
                 </div>
 
@@ -1455,6 +1721,66 @@ export default function ClientPortalView({
               </button>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* LOGOUT TRANSITION OVERLAY */}
+      {/* ========================================================================= */}
+      {isLoggingOut && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(15, 23, 42, 0.75)',
+          backdropFilter: 'blur(4px)',
+          zIndex: 9999,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center'
+        }}>
+          <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+          <div className="card" style={{
+            padding: '2.5rem 3rem',
+            backgroundColor: '#FFFFFF',
+            textAlign: 'center',
+            maxWidth: '420px',
+            width: '90%',
+            boxShadow: 'var(--shadow-lg)',
+            borderRadius: 'var(--radius-lg)'
+          }}>
+            <div className="brand-icon" style={{ margin: '0 auto 1rem auto', width: '50px', height: '50px', fontSize: '1.4rem' }}>
+              Z
+            </div>
+            
+            {logoutStep === 'progress' ? (
+              <>
+                <h3 style={{ fontSize: '1.35rem', color: 'var(--text-primary)', marginBottom: '0.5rem' }}>
+                  Logging out...
+                </h3>
+                <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                  Safely terminating your Zenque Tech authenticated session.
+                </p>
+                <div style={{ marginTop: '1.5rem', display: 'flex', justifyContent: 'center' }}>
+                  <div style={{ width: '28px', height: '28px', border: '3px solid var(--burgundy-light)', borderTopColor: 'var(--burgundy-main)', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ width: '42px', height: '42px', borderRadius: '50%', backgroundColor: '#D1FAE5', color: '#047857', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 0.75rem auto' }}>
+                  <CheckCircle2 size={24} />
+                </div>
+                <h3 style={{ fontSize: '1.35rem', color: 'var(--text-primary)', marginBottom: '0.5rem' }}>
+                  Logged Out Successfully
+                </h3>
+                <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                  Redirecting to Public Home...
+                </p>
+              </>
+            )}
           </div>
         </div>
       )}

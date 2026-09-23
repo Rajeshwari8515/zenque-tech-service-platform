@@ -3,7 +3,7 @@ import { ArrowLeft, ArrowRight, CheckCircle2, Clock, Sparkles } from 'lucide-rea
 import { SERVICES_DATA } from '../data/mockServices';
 
 export default function PackagesView({ selectedService, selectedPackage, setSelectedPackage, setActiveView, onRequestClick }) {
-  const currentService = selectedService || SERVICES_DATA[0];
+  const packagesList = currentService?.packages || (SERVICES_DATA.find(s => (s.title || '').toLowerCase() === (currentService?.title || currentService?.serviceName || '').toLowerCase())?.packages) || [];
 
   return (
     <div className="section" style={{ paddingTop: '2.5rem' }}>
@@ -16,14 +16,14 @@ export default function PackagesView({ selectedService, selectedPackage, setSele
           style={{ marginBottom: '1.75rem' }}
         >
           <ArrowLeft size={16} />
-          <span>Back to Service Details ({currentService.title})</span>
+          <span>Back to Service Details ({currentService.title || currentService.serviceName})</span>
         </button>
 
         {/* Selected Service Header */}
         <div className="section-header">
           <div className="badge-tag">
             <Sparkles size={14} />
-            <span>{currentService.title}</span>
+            <span>{currentService.title || currentService.serviceName}</span>
           </div>
           <h1 className="section-title" style={{ fontSize: '2.5rem' }}>Choose a Package</h1>
           <p className="section-subtitle">
@@ -33,7 +33,7 @@ export default function PackagesView({ selectedService, selectedPackage, setSele
 
         {/* Package Cards Grid */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '2rem', marginBottom: '3.5rem' }}>
-          {currentService.packages.map((pkg) => {
+          {packagesList.map((pkg) => {
             const isSelected = selectedPackage && selectedPackage.id === pkg.id;
             const isFeatured = pkg.isFeatured;
 

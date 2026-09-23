@@ -27,8 +27,8 @@ export const MOCK_FALLBACK_ENQUIRIES = [
     consultation: 'yes',
     requestCall: 'yes',
     needsConsultation: 'yes',
-    preferredDate: '15 Sep 2026',
-    preferredTime: '10:00 AM - 12:00 PM',
+    preferredDate: '',
+    preferredTime: '',
     quotation: {
       id: 'QT-10234',
       issuedDate: '12 Sep 2026',
@@ -152,3 +152,31 @@ export function updateStoredEnquiry(updatedEnquiry) {
   saveStoredEnquiries(updated);
   return updated;
 }
+
+export function formatConsultationSchedule(dateStr, timeStr) {
+  if (!dateStr && !timeStr) return '';
+
+  let formattedDate = dateStr || '';
+  if (dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+    const parts = dateStr.split('-');
+    const dateObj = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+    formattedDate = dateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+  }
+
+  let formattedTime = timeStr || '';
+  if (timeStr && /^\d{2}:\d{2}(:\d{2})?$/.test(timeStr)) {
+    const parts = timeStr.split(':');
+    let h = parseInt(parts[0], 10);
+    const min = parts[1];
+    const ampm = h >= 12 ? 'PM' : 'AM';
+    h = h % 12;
+    if (h === 0) h = 12;
+    formattedTime = `${h}:${min} ${ampm}`;
+  }
+
+  if (formattedDate && formattedTime) {
+    return `${formattedDate}, ${formattedTime}`;
+  }
+  return formattedDate || formattedTime;
+}
+
